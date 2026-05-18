@@ -123,6 +123,12 @@
         }
       };
 
+      const clearImage = () => {
+        image.removeAttribute('src');
+        image.hidden = true;
+        placeholder.hidden = false;
+      };
+
       input.addEventListener('change', async (event) => {
         const file = event.target.files?.[0];
         if (!file) {
@@ -138,7 +144,11 @@
         try {
           const content = await file.text();
           const parsed = new DOMParser().parseFromString(content, 'image/svg+xml');
-          if (!parsed.documentElement || parsed.documentElement.nodeName.toLowerCase() !== 'svg') {
+          if (
+            !parsed.documentElement ||
+            parsed.documentElement.nodeName.toLowerCase() !== 'svg' ||
+            parsed.querySelector('parsererror')
+          ) {
             throw new Error('Invalid SVG');
           }
 
@@ -148,11 +158,10 @@
           image.hidden = false;
           placeholder.hidden = true;
           setStatus(`Loaded: ${file.name}`);
-        } catch {
+        } catch (error) {
+          console.error(error);
           revokeCurrentUrl();
-          image.removeAttribute('src');
-          image.hidden = true;
-          placeholder.hidden = false;
+          clearImage();
           setStatus('Could not read this SVG file.', true);
         }
       });
