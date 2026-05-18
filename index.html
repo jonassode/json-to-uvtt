@@ -149,8 +149,9 @@
           return;
         }
 
-        const isSvgFile = file.name.toLowerCase().endsWith('.svg') || file.type === 'image/svg+xml';
-        if (!isSvgFile) {
+        const appearsToBeSvg =
+          file.name.toLowerCase().endsWith('.svg') || file.type === 'image/svg+xml';
+        if (!appearsToBeSvg) {
           setStatus('Please select a valid .svg file.', true);
           return;
         }
@@ -170,6 +171,7 @@
           revokeCurrentUrl();
           currentUrl = URL.createObjectURL(new Blob([sanitizedContent], { type: 'image/svg+xml' }));
           image.src = currentUrl;
+          image.alt = `Uploaded SVG map: ${file.name}`;
           image.hidden = false;
           placeholder.hidden = true;
           setStatus(`Loaded: ${file.name}`);
