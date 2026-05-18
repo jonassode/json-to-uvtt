@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SVG Map Viewer</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: Inter, "Segoe UI", Arial, sans-serif;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: #f4efe1;
+        color: #201f1c;
+      }
+
+      main {
+        width: min(1100px, 94vw);
+        display: grid;
+        gap: 1rem;
+      }
+
+      .controls {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        flex-wrap: wrap;
+      }
+
+      .upload {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0.65rem 1rem;
+        border: 1px solid #201f1c;
+        border-radius: 0.5rem;
+        background: #fffaf0;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      .upload:hover {
+        background: #fef6dd;
+      }
+
+      input[type="file"] {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+      }
+
+      .status {
+        margin: 0;
+        font-size: 0.95rem;
+      }
+
+      .status.error {
+        color: #b00020;
+      }
+
+      .map-frame {
+        border: 2px solid #201f1c;
+        border-radius: 0.5rem;
+        background: #ece5d4;
+        min-height: 60vh;
+        display: grid;
+        place-items: center;
+        overflow: auto;
+        padding: 0.75rem;
+      }
+
+      .map-frame img {
+        max-width: 100%;
+        max-height: 78vh;
+        height: auto;
+        display: block;
+      }
+
+      .placeholder {
+        color: #6c675c;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="controls">
+        <label class="upload" for="svg-upload">Upload SVG Map</label>
+        <input id="svg-upload" type="file" accept=".svg,image/svg+xml" />
+        <p id="status" class="status">Choose an SVG file to render the map.</p>
+      </section>
+
+      <section class="map-frame" aria-live="polite">
+        <p id="placeholder" class="placeholder">No map loaded yet.</p>
+        <img id="map-image" alt="Uploaded SVG map" hidden />
+      </section>
+    </main>
+
+    <script>
+      const input = document.getElementById('svg-upload');
+      const status = document.getElementById('status');
+      const image = document.getElementById('map-image');
+      const placeholder = document.getElementById('placeholder');
+      let currentUrl = '';
+
+      const setStatus = (message, isError = false) => {
+        status.textContent = message;
+        status.classList.toggle('error', isError);
+      };
+
+      const revokeCurrentUrl = () => {
+        if (currentUrl) {
+          URL.revokeObjectURL(currentUrl);
+          currentUrl = '';
+        }
+      };
+
+      input.addEventListener('change', async (event) => {
+        const file = event.target.files?.[0];
+        if (!file) {
+          return;
+        }
+
+        const isSvgFile = file.name.toLowerCase().endsWith('.svg') || file.type === 'image/svg+xml';
+        if (!isSvgFile) {
+          setStatus('Please select a valid .svg file.', true);
+          return;
+        }
+
+        try {
+          const content = await file.text();
+          const parsed = new DOMParser().parseFromString(content, 'image/svg+xml');
+          if (!parsed.documentElement || parsed.documentElement.nodeName.toLowerCase() !== 'svg') {
+            throw new Error('Invalid SVG');
+          }
+
+          revokeCurrentUrl();
+          currentUrl = URL.createObjectURL(new Blob([content], { type: 'image/svg+xml' }));
+          image.src = currentUrl;
+          image.hidden = false;
+          placeholder.hidden = true;
+          setStatus(`Loaded: ${file.name}`);
+        } catch {
+          revokeCurrentUrl();
+          image.removeAttribute('src');
+          image.hidden = true;
+          placeholder.hidden = false;
+          setStatus('Could not read this SVG file.', true);
+        }
+      });
+
+      window.addEventListener('beforeunload', revokeCurrentUrl);
+    </script>
+  </body>
+</html>
