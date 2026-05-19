@@ -165,6 +165,17 @@
         color: #6c675c;
         text-align: center;
       }
+
+      /* Prevent vector boxes from rendering their bounds outside masking groups */
+      svg * {
+        clipping-geometry: padding-box;
+      }
+      
+      /* Ensure empty/structural groups don't accidentally render bounding artifacts */
+      svg g:empty, svg clipPath path {
+        stroke: none !important;
+        stroke-width: 0 !important;
+      }
     </style>
   </head>
   <body>
@@ -232,42 +243,26 @@
       };
 
       const cleanDungeonSvg = (svgDocument) => {
-        // 1. Inject a style override directly into the SVG to kill the anti-aliasing ghost lines.
-        // Since shape-rendering didn't work alone, we combine it with stroke overrides.
-        const styleBlock = svgDocument.createElementNS("http://www.w3.org/2000/svg", "style");
-        styleBlock.textContent = `
-          /* Force paths that are meant to be seamless to bleed into each other slightly */
-          path, polygon, rect, circle {
-            stroke-linejoin: round;
-            stroke-linecap: round;
-          }
-        `;
-        svgDocument.documentElement.appendChild(styleBlock);
+        // 1. Clear bounding stroke defaults out of clip paths, where browser leaks usually live
+        svgDocument.querySelectorAll('clipPath, defs').forEach((container) => {
+          container.querySelectorAll('*').forEach((el) => {
+            el.removeAttribute('stroke');
+            el.removeAttribute('stroke-width');
+            el.style.stroke = 'none';
+          });
+        });
       
-        // 2. Deep-clean elements by checking computed styles or explicit attributes
-        svgDocument.querySelectorAll('path, polygon, rect, circle').forEach((el) => {
-          // Check attributes OR inline styles
-          const inlineStyle = el.getAttribute('style') || '';
-          const hasInlineStroke = inlineStyle.includes('stroke:') && !inlineStyle.includes('stroke:none');
-          
-          const attrFill = el.getAttribute('fill');
-          const attrStroke = el.getAttribute('stroke');
-          
-          const hasFill = (attrFill && attrFill !== 'none') || inlineStyle.includes('fill:');
-          const hasExplicitStroke = (attrStroke && attrStroke !== 'none') || hasInlineStroke;
-      
-          // If it's a fill-only path, we force an identical stroke color to bridge the seam gap.
-          // This is the silver bullet for this specific rendering bug.
-          if (hasFill && !hasExplicitStroke) {
-            const fillColor = attrFill || (inlineStyle.match(/fill:\s*([^;]+)/) || [])[1] || 'currentColor';
-            
-            // Giving a filled path a tiny stroke of the EXACT SAME COLOR 
-            // forces the browser renderer to cover up the anti-aliasing seam gap.
-            el.setAttribute('stroke', fillColor);
-            el.setAttribute('stroke-width', '0.5px'); 
-            el.setAttribute('paint-order', 'stroke fill'); // Ensures the stroke expands outwards to fill the gap
+        // 2. Identify and fix inherited properties on the primary layout groups
+        svgDocument.querySelectorAll('g').forEach((group) => {
+          // If a group has a stroke-width but no color, browsers default to rendering a thin black line. 
+          // We explicitly kill that default behavior.
+          if (group.hasAttribute('stroke-width') && !group.hasAttribute('stroke')) {
+            group.removeAttribute('stroke-width');
           }
         });
+      
+        // 3. Address vector precision artifacts
+        svgDocument.documentElement.setAttribute('xml:space', 'preserve');
       };
 
       const sanitizeSvg = (svgDocument) => {
