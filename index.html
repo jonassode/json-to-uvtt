@@ -451,7 +451,7 @@
        * Returns { dataUrl, cropX, cropY, cropW, cropH } where cropX/Y/W/H are
        * the captured region expressed in SVG user-unit coordinates.
        */
-      const renderSvgToDataUrl = (svgDoc, svgW, svgH, ppg = 0) => new Promise((resolve) => {
+      const renderSvgToDataUrl = (svgDoc, svgW, svgH, ppg = 0, geoMinX = Infinity, geoMinY = Infinity) => new Promise((resolve) => {
         // Max canvas dimension; keeps memory reasonable and avoids GPU texture limits.
         const MAX = 4096;
         // Border added around the detected content, in output canvas pixels.
@@ -517,10 +517,24 @@
           if (maxX < 0) { full(); return; }
 
           // Add the pixel border and clamp to canvas bounds.
-          const px0 = Math.max(0, minX - BORDER);
-          const py0 = Math.max(0, minY - BORDER);
+          let px0 = Math.max(0, minX - BORDER);
+          let py0 = Math.max(0, minY - BORDER);
           const px1 = Math.min(w, maxX + BORDER + 1);
           const py1 = Math.min(h, maxY + BORDER + 1);
+
+          // Ensure the crop origin never starts AFTER the geometry extents.
+          // Wall/door coordinates come from raw SVG attributes and may appear
+          // before the visual content detected by the pixel scan, which would
+          // otherwise produce negative line-of-sight coordinates.
+          if (isFinite(geoMinX)) {
+            const geoPx0 = Math.max(0, Math.floor(geoMinX * w / svgW) - BORDER);
+            px0 = Math.min(px0, geoPx0);
+          }
+          if (isFinite(geoMinY)) {
+            const geoPy0 = Math.max(0, Math.floor(geoMinY * h / svgH) - BORDER);
+            py0 = Math.min(py0, geoPy0);
+          }
+
           const cw = px1 - px0;
           const ch = py1 - py0;
 
@@ -588,6 +602,7 @@
 
         const lineOfSight = [];
         const portals = [];
+        let rawGeoMinX = Infinity, rawGeoMinY = Infinity;
 
         svgEl.querySelectorAll('path, line, polyline, polygon, rect').forEach((el) => {
           const isDoor = hasKeyword(el, 'door');
@@ -599,6 +614,14 @@
 
           elementPolylines(el).forEach((pts) => {
             if (pts.length < 2) return;
+
+            // Track raw SVG-unit bounding box so the image crop never starts
+            // past the geometry, which would produce negative LOS coordinates.
+            pts.forEach(([x, y]) => {
+              if (x < rawGeoMinX) rawGeoMinX = x;
+              if (y < rawGeoMinY) rawGeoMinY = y;
+            });
+
             if (isWall) {
               // Each line_of_sight entry must be a single 2-point segment.
               const gridPts = pts.map(toGrid);
@@ -624,7 +647,7 @@
 
         // Render image with pixel-scan crop; returns SVG-space crop coordinates.
         const { dataUrl: imageData, cropX, cropY, cropW, cropH } =
-          await renderSvgToDataUrl(svgDoc, svgW, svgH, ppg);
+          await renderSvgToDataUrl(svgDoc, svgW, svgH, ppg, rawGeoMinX, rawGeoMinY);
 
         // Shift all geometry coordinates so (0,0) aligns with the top-left of the cropped image.
         const offsetX = cropX / ppg;
@@ -652,7 +675,8 @@
           },
           line_of_sight: adjustedLineOfSight,
           portals: adjustedPortals,
-          environment: { baked_lighting: false, ambient_light: 'ffffffff' },
+          environment: { baked_lighting: true, ambient_light: 'ffffffff' },
+          lights: [],
           image: imageData,
         };
       };
