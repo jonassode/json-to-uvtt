@@ -231,7 +231,22 @@
         placeholder.hidden = false;
       };
 
+      const cleanDungeonSvg = (svgDocument) => {
+        svgDocument.querySelectorAll('path, polygon, rect, circle').forEach((el) => {
+          const hasFill = el.getAttribute('fill') && el.getAttribute('fill') !== 'none';
+          const strokeColor = el.getAttribute('stroke');
+          const strokeWidth = el.getAttribute('stroke-width');
+          const hasStroke =
+            (strokeColor && strokeColor !== 'none') || strokeWidth === '0';
+          if (hasFill && !hasStroke) {
+            el.setAttribute('stroke', 'none');
+            el.setAttribute('stroke-width', '0');
+          }
+        });
+      };
+
       const sanitizeSvg = (svgDocument) => {
+        cleanDungeonSvg(svgDocument);
         svgDocument.querySelectorAll('script, foreignObject').forEach((node) => node.remove());
         svgDocument.querySelectorAll('*').forEach((node) => {
           [...node.attributes].forEach((attribute) => {
