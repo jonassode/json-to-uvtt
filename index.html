@@ -235,6 +235,7 @@
         const MAX_ARTIFACT_GEOMETRY_LENGTH = 48;
         const MAX_ARTIFACT_STROKE_WIDTH = 2.25;
         const MAX_NEAR_BLACK_CHANNEL_VALUE = 40;
+        const isFiniteNumber = (value) => Number.isFinite(value);
 
         const isNearBlack = (value) => {
           if (!value) {
@@ -255,10 +256,11 @@
           if (hexMatch) {
             const hex = hexMatch[1];
             const parseHex = (hexValue) => Number.parseInt(hexValue, 16);
-            const channels =
+            const parseHexChannels = () =>
               hex.length === 3
                 ? hex.split('').map((hexChar) => parseHex(hexChar.repeat(2)))
                 : [hex.slice(0, 2), hex.slice(2, 4), hex.slice(4, 6)].map((hexPair) => parseHex(hexPair));
+            const channels = parseHexChannels();
             return channels.every(
               (channel) => Number.isFinite(channel) && channel <= MAX_NEAR_BLACK_CHANNEL_VALUE
             );
@@ -357,7 +359,7 @@
           const y1 = Number.parseFloat(node.getAttribute('y1') ?? '0');
           const x2 = Number.parseFloat(node.getAttribute('x2') ?? '0');
           const y2 = Number.parseFloat(node.getAttribute('y2') ?? '0');
-          if (![x1, y1, x2, y2].every(Number.isFinite)) {
+          if (![x1, y1, x2, y2].every(isFiniteNumber)) {
             return Number.NaN;
           }
           return Math.hypot(x2 - x1, y2 - y1);
