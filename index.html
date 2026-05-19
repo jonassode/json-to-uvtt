@@ -436,20 +436,40 @@
         }
       };
 
-      /** Render svgDoc to a JPEG data-URL via an off-screen canvas. */
-      const renderSvgToDataUrl = (svgDoc, svgW, svgH) => new Promise((resolve) => {
+      /**
+       * Render svgDoc to a JPEG data-URL via an off-screen canvas.
+       * crop = { x, y, w, h } in SVG user-unit pixels (optional).
+       * When provided the rendered image covers only that region.
+       */
+      const renderSvgToDataUrl = (svgDoc, svgW, svgH, crop) => new Promise((resolve) => {
         const MAX = 4096;
-        let w = svgW, h = svgH;
+        const cropX = crop ? crop.x : 0;
+        const cropY = crop ? crop.y : 0;
+        const cropW = crop ? crop.w : svgW;
+        const cropH = crop ? crop.h : svgH;
+
+        let w = cropW, h = cropH;
         if (w > MAX || h > MAX) {
           const s = Math.min(MAX / w, MAX / h);
           w = Math.round(w * s);
           h = Math.round(h * s);
         }
+        w = Math.max(1, Math.round(w));
+        h = Math.max(1, Math.round(h));
+
+        // Clone the SVG and set viewBox + dimensions to the crop region so the
+        // browser renders only that area at the target canvas resolution.
+        const cloned = svgDoc.cloneNode(true);
+        const clonedEl = cloned.documentElement;
+        clonedEl.setAttribute('viewBox', `${cropX} ${cropY} ${cropW} ${cropH}`);
+        clonedEl.setAttribute('width', String(w));
+        clonedEl.setAttribute('height', String(h));
+
         const canvas = document.createElement('canvas');
         canvas.width = w;
         canvas.height = h;
         const ctx = canvas.getContext('2d');
-        const svgStr = new XMLSerializer().serializeToString(svgDoc);
+        const svgStr = new XMLSerializer().serializeToString(cloned);
         const blob = new Blob([svgStr], { type: 'image/svg+xml' });
         const url = URL.createObjectURL(blob);
         const img = new Image();
@@ -489,6 +509,17 @@
         const lineOfSight = [];
         const portals = [];
 
+        // Track bounding box of all wall/door geometry in SVG px so we can crop the image.
+        let bboxMinX = Infinity, bboxMinY = Infinity, bboxMaxX = -Infinity, bboxMaxY = -Infinity;
+        const trackBbox = (pts) => {
+          for (const [x, y] of pts) {
+            if (x < bboxMinX) bboxMinX = x;
+            if (y < bboxMinY) bboxMinY = y;
+            if (x > bboxMaxX) bboxMaxX = x;
+            if (y > bboxMaxY) bboxMaxY = y;
+          }
+        };
+
         svgEl.querySelectorAll('path, line, polyline, polygon, rect').forEach((el) => {
           const isDoor = hasKeyword(el, 'door');
           const isWall = !isDoor && (
@@ -499,6 +530,7 @@
 
           elementPolylines(el).forEach((pts) => {
             if (pts.length < 2) return;
+            trackBbox(pts);
             if (isWall) {
               lineOfSight.push(pts.map(toGrid));
             } else {
@@ -518,20 +550,44 @@
           });
         });
 
-        const imageData = await renderSvgToDataUrl(svgDoc, svgW, svgH);
+        // Compute crop rectangle: bounding box of geometry + 30 px border, clamped to canvas.
+        const CROP_BORDER = 30;
+        const hasBbox = isFinite(bboxMinX);
+        const cropX = hasBbox ? Math.max(0, bboxMinX - CROP_BORDER) : 0;
+        const cropY = hasBbox ? Math.max(0, bboxMinY - CROP_BORDER) : 0;
+        const cropX2 = hasBbox ? Math.min(svgW, bboxMaxX + CROP_BORDER) : svgW;
+        const cropY2 = hasBbox ? Math.min(svgH, bboxMaxY + CROP_BORDER) : svgH;
+        const cropW = cropX2 - cropX;
+        const cropH = cropY2 - cropY;
+
+        // Shift all geometry coordinates so (0,0) is the top-left of the cropped image.
+        const offsetX = cropX / ppg;
+        const offsetY = cropY / ppg;
+        const shiftCoord = ({ x, y }) => ({
+          x: +(x - offsetX).toFixed(4),
+          y: +(y - offsetY).toFixed(4),
+        });
+        const adjustedLineOfSight = lineOfSight.map((poly) => poly.map(shiftCoord));
+        const adjustedPortals = portals.map((p) => ({
+          ...p,
+          position: shiftCoord(p.position),
+          bounds: p.bounds.map(shiftCoord),
+        }));
+
+        const imageData = await renderSvgToDataUrl(svgDoc, svgW, svgH, { x: cropX, y: cropY, w: cropW, h: cropH });
 
         return {
           format: 0.3,
           resolution: {
             map_origin: { x: 0, y: 0 },
             map_size: {
-              x: +(svgW / ppg).toFixed(2),
-              y: +(svgH / ppg).toFixed(2),
+              x: +(cropW / ppg).toFixed(2),
+              y: +(cropH / ppg).toFixed(2),
             },
             pixels_per_grid: ppg,
           },
-          line_of_sight: lineOfSight,
-          portals,
+          line_of_sight: adjustedLineOfSight,
+          portals: adjustedPortals,
           environment: { baked_lighting: false, ambient_light: 'ffffffff' },
           image: imageData,
         };
