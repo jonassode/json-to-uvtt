@@ -233,13 +233,20 @@
 
       const sanitizeSvg = (svgDocument) => {
         const MAX_ARTIFACT_LINE_LENGTH = 16;
+        const MAX_NEAR_BLACK_CHANNEL_VALUE = 40;
 
         const isNearBlack = (value) => {
           if (!value) {
             return false;
           }
           const color = value.trim().toLowerCase();
-          if (color === 'black' || color === '#000' || color === '#000000' || color === 'rgb(0,0,0)') {
+          if (
+            color === 'black' ||
+            color === '#000' ||
+            color === '#000000' ||
+            color === 'rgb(0,0,0)' ||
+            color === 'rgb(0, 0, 0)'
+          ) {
             return true;
           }
 
@@ -250,7 +257,9 @@
               hex.length === 3
                 ? hex.split('').map((ch) => Number.parseInt(`${ch}${ch}`, 16))
                 : [hex.slice(0, 2), hex.slice(2, 4), hex.slice(4, 6)].map((ch) => Number.parseInt(ch, 16));
-            return channels.every((channel) => Number.isFinite(channel) && channel <= 40);
+            return channels.every(
+              (channel) => Number.isFinite(channel) && channel <= MAX_NEAR_BLACK_CHANNEL_VALUE
+            );
           }
 
           const rgbMatch = color.match(/^rgba?\s*\(([^)]+)\)$/);
@@ -261,7 +270,12 @@
             .split(',')
             .slice(0, 3)
             .map((part) => Number.parseFloat(part.trim()));
-          return channels.length === 3 && channels.every((channel) => Number.isFinite(channel) && channel <= 40);
+          return (
+            channels.length === 3 &&
+            channels.every(
+              (channel) => Number.isFinite(channel) && channel <= MAX_NEAR_BLACK_CHANNEL_VALUE
+            )
+          );
         };
 
         const getStrokeValue = (node) => {
