@@ -307,7 +307,11 @@
 
       // ── SVG → UVTT conversion ────────────────────────────────────────────────
 
+      // Grid cell size in SVG user-unit pixels; 70px is the common standard used
+      // by Dungeon Alchemist and other popular map-making tools.
       const PIXELS_PER_GRID = 70;
+      // Minimum stroke-width (in SVG px) for a path to be classified as a wall
+      // when it carries no explicit wall/door class or id keyword.
       const WALL_STROKE_THRESHOLD = 3;
 
       /** Return true if el or any ancestor has class/id containing kw. */
@@ -448,8 +452,14 @@
        * the captured region expressed in SVG user-unit coordinates.
        */
       const renderSvgToDataUrl = (svgDoc, svgW, svgH) => new Promise((resolve) => {
+        // Max canvas dimension; keeps memory reasonable and avoids GPU texture limits.
         const MAX = 4096;
+        // Border added around the detected content, in output canvas pixels.
         const BORDER = 30;
+        // Squared colour-distance threshold for "differs from background".
+        // A value of 225 = 15² catches subtle hatching/shadow while ignoring
+        // JPEG-like compression artefacts in a uniform background.
+        const BG_THRESHOLD_SQ = 225;
         let w = svgW, h = svgH;
         if (w > MAX || h > MAX) {
           const s = Math.min(MAX / w, MAX / h);
@@ -494,7 +504,7 @@
             for (let x = 0; x < w; x++) {
               const i = (y * w + x) * 4;
               const dr = pixels[i] - bgR, dg = pixels[i + 1] - bgG, db = pixels[i + 2] - bgB;
-              if (dr * dr + dg * dg + db * db > 225) { // colour distance > 15
+              if (dr * dr + dg * dg + db * db > BG_THRESHOLD_SQ) {
                 if (x < minX) minX = x;
                 if (y < minY) minY = y;
                 if (x > maxX) maxX = x;
