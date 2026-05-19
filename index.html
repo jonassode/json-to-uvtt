@@ -126,6 +126,15 @@
         background: #fef6dd;
       }
 
+      button.upload {
+        font-family: inherit;
+      }
+
+      button.upload:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+
       input[type="file"] {
         position: absolute;
         width: 1px;
@@ -180,6 +189,9 @@
           <label class="upload" for="svg-upload">Upload SVG Map</label>
           <input id="svg-upload" type="file" accept=".svg,image/svg+xml" />
         </div>
+        <div class="menu-item menu-item-action">
+          <button id="export-uvtt" class="upload" disabled>Export to .uvtt</button>
+        </div>
         <p id="status" class="menu-status">Choose an SVG file to render the map.</p>
       </div>
     </header>
@@ -196,7 +208,10 @@
       const placeholder = document.getElementById('placeholder');
       const menuBtn = document.getElementById('menu-btn');
       const menuDropdown = document.getElementById('menu-dropdown');
+      const exportBtn = document.getElementById('export-uvtt');
       let currentUrl = '';
+      let parsedSvgDoc = null;
+      let svgExportName = '';
 
       // Hamburger toggle
       menuBtn.addEventListener('click', (e) => {
@@ -229,6 +244,9 @@
         image.removeAttribute('data');
         image.hidden = true;
         placeholder.hidden = false;
+        parsedSvgDoc = null;
+        svgExportName = '';
+        exportBtn.disabled = true;
       };
 
       const sanitizeSvg = (svgDocument) => {
@@ -275,12 +293,471 @@
           image.data = currentUrl;
           image.hidden = false;
           placeholder.hidden = true;
+          parsedSvgDoc = parsed;
+          svgExportName = file.name.replace(/\.svg$/i, '');
+          exportBtn.disabled = false;
           setStatus(`Loaded: ${file.name}`);
         } catch (error) {
           console.error(error);
           revokeCurrentUrl();
           clearImage();
           setStatus('Could not read this SVG file.', true);
+        }
+      });
+
+      // ── SVG → UVTT conversion ────────────────────────────────────────────────
+
+      // Grid cell size in SVG user-unit pixels; 70px is the common standard used
+      // by Dungeon Alchemist and other popular map-making tools.
+      const PIXELS_PER_GRID = 70;
+      // Minimum stroke-width (in SVG px) for a path to be classified as a wall
+      // when it carries no explicit wall/door class or id keyword.
+      const WALL_STROKE_THRESHOLD = 3;
+
+      /** Return true if el or any ancestor has class/id containing kw. */
+      const hasKeyword = (el, kw) => {
+        let node = el;
+        while (node && node.getAttribute) {
+          if (
+            (node.getAttribute('class') || '').toLowerCase().includes(kw) ||
+            (node.getAttribute('id') || '').toLowerCase().includes(kw)
+          ) return true;
+          node = node.parentNode;
+        }
+        return false;
+      };
+
+      /** Get the numeric stroke-width from inline style or attribute. */
+      const getStrokeWidth = (el) => {
+        const m = (el.getAttribute('style') || '').match(/stroke-width\s*:\s*([\d.]+)/);
+        if (m) return parseFloat(m[1]);
+        const sw = el.getAttribute('stroke-width');
+        return sw ? parseFloat(sw) : 1;
+      };
+
+      /** Parse a "points" attribute string into [[x,y], ...]. */
+      const parseSvgPoints = (str) => {
+        const nums = (str || '').trim().split(/[\s,]+/).filter(Boolean).map(Number).filter(isFinite);
+        const pts = [];
+        for (let i = 0; i + 1 < nums.length; i += 2) pts.push([nums[i], nums[i + 1]]);
+        return pts;
+      };
+
+      /**
+       * Parse an SVG path "d" attribute into an array of polylines.
+       * Each polyline is an array of [x, y] pairs.
+       * Bezier curves are approximated by their end-points only.
+       */
+      const parseSvgPath = (d) => {
+        const polylines = [];
+        let pts = [];
+        let cx = 0, cy = 0, sx = 0, sy = 0;
+
+        const toks = d.match(
+          /([MmZzLlHhVvCcSsQqTtAa])|([+-]?(?:(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?))/g
+        ) || [];
+        let i = 0;
+        let cmd = '';
+
+        const isCmd = (t) => /[MmZzLlHhVvCcSsQqTtAa]/.test(t);
+        const n = () => (i < toks.length && !isCmd(toks[i])) ? parseFloat(toks[i++]) : 0;
+
+        const add = (x, y) => {
+          const last = pts[pts.length - 1];
+          if (!last || last[0] !== x || last[1] !== y) pts.push([x, y]);
+        };
+
+        const flush = () => {
+          if (pts.length >= 2) polylines.push(pts);
+          pts = [];
+        };
+
+        while (i < toks.length) {
+          if (isCmd(toks[i])) {
+            cmd = toks[i++];
+            if (cmd === 'Z' || cmd === 'z') {
+              add(sx, sy);
+              flush();
+              cx = sx; cy = sy;
+            }
+            continue;
+          }
+          switch (cmd) {
+            case 'M': flush(); cx = n(); cy = n(); sx = cx; sy = cy; add(cx, cy); cmd = 'L'; break;
+            case 'm': flush(); cx += n(); cy += n(); sx = cx; sy = cy; add(cx, cy); cmd = 'l'; break;
+            case 'L': add(cx, cy); cx = n(); cy = n(); add(cx, cy); break;
+            case 'l': add(cx, cy); cx += n(); cy += n(); add(cx, cy); break;
+            case 'H': add(cx, cy); cx = n(); add(cx, cy); break;
+            case 'h': add(cx, cy); cx += n(); add(cx, cy); break;
+            case 'V': add(cx, cy); cy = n(); add(cx, cy); break;
+            case 'v': add(cx, cy); cy += n(); add(cx, cy); break;
+            case 'C': n(); n(); n(); n(); cx = n(); cy = n(); add(cx, cy); break;
+            case 'c': n(); n(); n(); n(); cx += n(); cy += n(); add(cx, cy); break;
+            case 'S': n(); n(); cx = n(); cy = n(); add(cx, cy); break;
+            case 's': n(); n(); cx += n(); cy += n(); add(cx, cy); break;
+            case 'Q': n(); n(); cx = n(); cy = n(); add(cx, cy); break;
+            case 'q': n(); n(); cx += n(); cy += n(); add(cx, cy); break;
+            case 'T': cx = n(); cy = n(); add(cx, cy); break;
+            case 't': cx += n(); cy += n(); add(cx, cy); break;
+            case 'A': n(); n(); n(); n(); n(); cx = n(); cy = n(); add(cx, cy); break;
+            case 'a': n(); n(); n(); n(); n(); cx += n(); cy += n(); add(cx, cy); break;
+            default: i++; break;
+          }
+        }
+        if (pts.length >= 2) polylines.push(pts);
+        return polylines;
+      };
+
+      /** Convert a single SVG element to an array of polylines. */
+      const elementPolylines = (el) => {
+        const tag = (el.localName || el.tagName || '').toLowerCase().replace(/^[^:]+:/, '');
+        switch (tag) {
+          case 'path':
+            return parseSvgPath(el.getAttribute('d') || '');
+          case 'line': {
+            const x1 = parseFloat(el.getAttribute('x1')) || 0;
+            const y1 = parseFloat(el.getAttribute('y1')) || 0;
+            const x2 = parseFloat(el.getAttribute('x2')) || 0;
+            const y2 = parseFloat(el.getAttribute('y2')) || 0;
+            return [[[x1, y1], [x2, y2]]];
+          }
+          case 'polyline': {
+            const pts = parseSvgPoints(el.getAttribute('points'));
+            return pts.length >= 2 ? [pts] : [];
+          }
+          case 'polygon': {
+            const pts = parseSvgPoints(el.getAttribute('points'));
+            return pts.length >= 2 ? [[...pts, pts[0]]] : [];
+          }
+          case 'rect': {
+            const x = parseFloat(el.getAttribute('x')) || 0;
+            const y = parseFloat(el.getAttribute('y')) || 0;
+            const w = parseFloat(el.getAttribute('width')) || 0;
+            const h = parseFloat(el.getAttribute('height')) || 0;
+            return [[[x, y], [x + w, y], [x + w, y + h], [x, y + h], [x, y]]];
+          }
+          default: return [];
+        }
+      };
+
+      /** Multiply two SVG matrices [a,b,c,d,e,f]: returns A × B. */
+      const multiplyMatrix = (A, B) => [
+        A[0]*B[0] + A[2]*B[1],
+        A[1]*B[0] + A[3]*B[1],
+        A[0]*B[2] + A[2]*B[3],
+        A[1]*B[2] + A[3]*B[3],
+        A[0]*B[4] + A[2]*B[5] + A[4],
+        A[1]*B[4] + A[3]*B[5] + A[5],
+      ];
+
+      /** Parse an SVG transform attribute string into a single [a,b,c,d,e,f] matrix. */
+      const parseTransformAttr = (str) => {
+        let m = [1, 0, 0, 1, 0, 0];
+        if (!str) return m;
+        const re = /(translate|scale|rotate|skewX|skewY|matrix)\s*\(([^)]*)\)/g;
+        let match;
+        while ((match = re.exec(str)) !== null) {
+          const args = match[2].trim().split(/[\s,]+/).map(Number).filter(isFinite);
+          let t;
+          const deg2rad = Math.PI / 180;
+          switch (match[1]) {
+            case 'translate': t = [1, 0, 0, 1, args[0]||0, args[1]||0]; break;
+            case 'scale': { const sx = args[0]||1, sy = args.length >= 2 ? args[1] : sx; t = [sx, 0, 0, sy, 0, 0]; break; }
+            case 'rotate': {
+              const a = (args[0]||0) * deg2rad, cos = Math.cos(a), sin = Math.sin(a);
+              t = args.length >= 3
+                ? [cos, sin, -sin, cos, args[1]*(1-cos)+args[2]*sin, args[2]*(1-cos)-args[1]*sin]
+                : [cos, sin, -sin, cos, 0, 0];
+              break;
+            }
+            case 'skewX': t = [1, 0, Math.tan((args[0]||0)*deg2rad), 1, 0, 0]; break;
+            case 'skewY': t = [1, Math.tan((args[0]||0)*deg2rad), 0, 1, 0, 0]; break;
+            case 'matrix': t = args.slice(0, 6); break;
+            default: t = [1, 0, 0, 1, 0, 0];
+          }
+          m = multiplyMatrix(m, t);
+        }
+        return m;
+      };
+
+      /**
+       * Compose all ancestor transforms from el up to (but not including) svgRoot,
+       * returning a single [a,b,c,d,e,f] matrix that maps element-local coordinates
+       * to SVG user-unit (viewBox) coordinates.
+       */
+      const getElementMatrix = (el, svgRoot) => {
+        let m = [1, 0, 0, 1, 0, 0];
+        let node = el;
+        while (node && node !== svgRoot) {
+          const t = node.getAttribute && node.getAttribute('transform');
+          if (t) m = multiplyMatrix(parseTransformAttr(t), m);
+          node = node.parentNode;
+        }
+        return m;
+      };
+
+      /** Apply a [a,b,c,d,e,f] matrix to a [x, y] point. */
+      const applyMatrix = ([a, b, c, d, e, f], [x, y]) => [a*x + c*y + e, b*x + d*y + f];
+
+      /**
+       * Render svgDoc to a JPEG data-URL via an off-screen canvas, auto-cropped
+       * to the visual content bounding box plus a 30-pixel border.
+       *
+       * Works by rendering the full SVG, then pixel-scanning to find which area
+       * differs from the background colour (sampled from the four corners).
+       * This is transform-agnostic and does not rely on SVG path coordinates.
+       *
+       * Returns { dataUrl, cropX, cropY, cropW, cropH } where cropX/Y/W/H are
+       * the captured region expressed in SVG user-unit coordinates.
+       */
+      const renderSvgToDataUrl = (svgDoc, svgW, svgH, ppg = 0) => new Promise((resolve) => {
+        // Max canvas dimension; keeps memory reasonable and avoids GPU texture limits.
+        const MAX = 4096;
+        // Border added around the detected content, in output canvas pixels.
+        const BORDER = 30;
+        // Squared colour-distance threshold for "differs from background".
+        // A value of 225 = 15² catches subtle hatching/shadow while ignoring
+        // JPEG-like compression artefacts in a uniform background.
+        const BG_THRESHOLD_SQ = 225;
+        let w = svgW, h = svgH;
+        if (w > MAX || h > MAX) {
+          const s = Math.min(MAX / w, MAX / h);
+          w = Math.round(w * s);
+          h = Math.round(h * s);
+        }
+        w = Math.max(1, Math.round(w));
+        h = Math.max(1, Math.round(h));
+
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+
+        // Fallback: return the full canvas (no crop) as a data URL.
+        const full = () => {
+          try { resolve({ dataUrl: canvas.toDataURL('image/jpeg', 0.85), cropX: 0, cropY: 0, cropW: svgW, cropH: svgH }); }
+          catch { resolve({ dataUrl: '', cropX: 0, cropY: 0, cropW: svgW, cropH: svgH }); }
+        };
+
+        const svgStr = new XMLSerializer().serializeToString(svgDoc);
+        const blob = new Blob([svgStr], { type: 'image/svg+xml' });
+        const url = URL.createObjectURL(blob);
+        const img = new Image();
+        img.onload = () => {
+          ctx.drawImage(img, 0, 0, w, h);
+          URL.revokeObjectURL(url);
+
+          // Pixel-scan to find visual content bounds.
+          const pixels = ctx.getImageData(0, 0, w, h).data;
+
+          // Estimate background colour from the four corners of the image.
+          const at = (x, y) => { const i = (y * w + x) * 4; return [pixels[i], pixels[i + 1], pixels[i + 2]]; };
+          const corners = [at(0, 0), at(w - 1, 0), at(0, h - 1), at(w - 1, h - 1)];
+          const bgR = Math.round(corners.reduce((s, [r]) => s + r, 0) / 4);
+          const bgG = Math.round(corners.reduce((s, [, g]) => s + g, 0) / 4);
+          const bgB = Math.round(corners.reduce((s, [,, b]) => s + b, 0) / 4);
+
+          // Find bounding box of pixels that differ noticeably from the background.
+          let minX = w, minY = h, maxX = -1, maxY = -1;
+          for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+              const i = (y * w + x) * 4;
+              const dr = pixels[i] - bgR, dg = pixels[i + 1] - bgG, db = pixels[i + 2] - bgB;
+              if (dr * dr + dg * dg + db * db > BG_THRESHOLD_SQ) {
+                if (x < minX) minX = x;
+                if (y < minY) minY = y;
+                if (x > maxX) maxX = x;
+                if (y > maxY) maxY = y;
+              }
+            }
+          }
+
+          // No content found — return the full image unchanged.
+          if (maxX < 0) { full(); return; }
+
+          // Add the pixel border and clamp to canvas bounds.
+          const px0 = Math.max(0, minX - BORDER);
+          const py0 = Math.max(0, minY - BORDER);
+          const px1 = Math.min(w, maxX + BORDER + 1);
+          const py1 = Math.min(h, maxY + BORDER + 1);
+
+          const cw = px1 - px0;
+          const ch = py1 - py0;
+
+          // Convert pixel crop coordinates back to SVG user-unit space so the
+          // caller can adjust geometry coordinates accordingly.
+          const svgCropX = px0 * svgW / w;
+          const svgCropY = py0 * svgH / h;
+          let svgCropW = cw * svgW / w;
+          let svgCropH = ch * svgH / h;
+
+          // Snap the crop to whole grid cells so map_size is always an integer.
+          // Any extra pixels are filled with the detected background colour.
+          let outCw = cw, outCh = ch;
+          if (ppg > 0) {
+            const gridW = Math.ceil(svgCropW / ppg);
+            const gridH = Math.ceil(svgCropH / ppg);
+            svgCropW = gridW * ppg;
+            svgCropH = gridH * ppg;
+            outCw = Math.round(svgCropW * w / svgW);
+            outCh = Math.round(svgCropH * h / svgH);
+          }
+
+          // Render the cropped region onto a new canvas.
+          const out = document.createElement('canvas');
+          out.width = outCw;
+          out.height = outCh;
+          const outCtx = out.getContext('2d');
+          if (outCw > cw || outCh > ch) {
+            // Fill the expanded area with the background colour so extra pixels
+            // are not black when JPEG-encoded.
+            outCtx.fillStyle = `rgb(${bgR},${bgG},${bgB})`;
+            outCtx.fillRect(0, 0, outCw, outCh);
+          }
+          outCtx.drawImage(canvas, px0, py0, cw, ch, 0, 0, cw, ch);
+
+          try { resolve({ dataUrl: out.toDataURL('image/jpeg', 0.85), cropX: svgCropX, cropY: svgCropY, cropW: svgCropW, cropH: svgCropH }); }
+          catch { full(); }
+        };
+        img.onerror = () => { URL.revokeObjectURL(url); resolve({ dataUrl: '', cropX: 0, cropY: 0, cropW: svgW, cropH: svgH }); };
+        img.src = url;
+      });
+
+      /** Convert a parsed SVG document to a Universal VTT object. */
+      const convertSvgToUvtt = async (svgDoc) => {
+        const svgEl = svgDoc.documentElement;
+
+        // Determine canvas size from viewBox or width/height attributes
+        let svgW = 0, svgH = 0;
+        let vbX = 0, vbY = 0;
+        const vb = svgEl.getAttribute('viewBox');
+        if (vb) {
+          const p = vb.trim().split(/[\s,]+/).map(Number);
+          if (p.length >= 4 && p.slice(2, 4).every(isFinite)) {
+            vbX = isFinite(p[0]) ? p[0] : 0;
+            vbY = isFinite(p[1]) ? p[1] : 0;
+            svgW = p[2];
+            svgH = p[3];
+          }
+        }
+        if (!svgW) svgW = parseFloat(svgEl.getAttribute('width')) || 1000;
+        if (!svgH) svgH = parseFloat(svgEl.getAttribute('height')) || 1000;
+
+        const ppg = PIXELS_PER_GRID;
+        const toGrid = ([x, y]) => ({
+          x: +(x / ppg).toFixed(4),
+          y: +(y / ppg).toFixed(4),
+        });
+
+        const lineOfSight = [];
+        const portals = [];
+
+        svgEl.querySelectorAll('path, line, polyline, polygon, rect').forEach((el) => {
+          const isDoor = hasKeyword(el, 'door');
+          const isWall = !isDoor && (
+            hasKeyword(el, 'wall') ||
+            getStrokeWidth(el) >= WALL_STROKE_THRESHOLD
+          );
+          if (!isWall && !isDoor) return;
+
+          const elMatrix = getElementMatrix(el, svgEl);
+
+          elementPolylines(el).forEach((pts) => {
+            if (pts.length < 2) return;
+            const tPts = pts.map((pt) => applyMatrix(elMatrix, pt));
+
+            if (isWall) {
+              // Each line_of_sight entry must be a single 2-point segment.
+              const gridPts = tPts.map(toGrid);
+              for (let si = 0; si < gridPts.length - 1; si++) {
+                lineOfSight.push([gridPts[si], gridPts[si + 1]]);
+              }
+            } else {
+              const p0 = toGrid(tPts[0]);
+              const p1 = toGrid(tPts[tPts.length - 1]);
+              portals.push({
+                position: {
+                  x: +((p0.x + p1.x) / 2).toFixed(4),
+                  y: +((p0.y + p1.y) / 2).toFixed(4),
+                },
+                bounds: [p0, p1],
+                rotation: 0,
+                closed: true,
+                freestanding: false,
+              });
+            }
+          });
+        });
+
+        // Render image with pixel-scan crop; returns SVG-space crop coordinates.
+        const { dataUrl: imageData, cropX, cropY, cropW, cropH } =
+          await renderSvgToDataUrl(svgDoc, svgW, svgH, ppg);
+
+        // Shift all geometry coordinates so (0,0) aligns with the top-left of the cropped image.
+        // cropX/cropY are in SVG width/height units (distance from the viewBox left/top edge).
+        // Adding vbX/vbY converts them to absolute SVG path coordinate space so that
+        // the subtraction correctly accounts for any non-zero viewBox origin.
+        const offsetX = (vbX + cropX) / ppg;
+        const offsetY = (vbY + cropY) / ppg;
+        const shiftCoord = ({ x, y }) => ({
+          x: +(x - offsetX).toFixed(4),
+          y: +(y - offsetY).toFixed(4),
+        });
+        const adjustedLineOfSight = lineOfSight.map((poly) => poly.map(shiftCoord));
+        const adjustedPortals = portals.map((p) => ({
+          ...p,
+          position: shiftCoord(p.position),
+          bounds: p.bounds.map(shiftCoord),
+        }));
+
+        return {
+          format: 0.3,
+          resolution: {
+            map_origin: { x: 0, y: 0 },
+            map_size: {
+              x: Math.round(cropW / ppg),
+              y: Math.round(cropH / ppg),
+            },
+            pixels_per_grid: ppg,
+          },
+          line_of_sight: adjustedLineOfSight,
+          portals: adjustedPortals,
+          environment: { baked_lighting: true, ambient_light: 'ffffffff' },
+          lights: [],
+          image: imageData.replace(/^data:[^,]+,/, ''),
+        };
+      };
+
+      // ── Export button ────────────────────────────────────────────────────────
+
+      let isExporting = false;
+
+      exportBtn.addEventListener('click', async () => {
+        if (!parsedSvgDoc || isExporting) return;
+        isExporting = true;
+        menuDropdown.classList.remove('open');
+        menuBtn.setAttribute('aria-expanded', 'false');
+        exportBtn.disabled = true;
+        setStatus('Exporting…');
+        try {
+          const uvtt = await convertSvgToUvtt(parsedSvgDoc);
+          const json = JSON.stringify(uvtt, null, 2);
+          const blob = new Blob([json], { type: 'application/octet-stream' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = (svgExportName || 'map') + '.uvtt';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          setStatus(`Exported: ${svgExportName || 'map'}.uvtt`);
+        } catch (err) {
+          console.error(err);
+          setStatus('Export failed.', true);
+        } finally {
+          isExporting = false;
+          exportBtn.disabled = false;
         }
       });
 
