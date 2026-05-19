@@ -161,6 +161,7 @@
         width: 100%;
         height: 100%;
         display: block;
+        object-fit: contain;
       }
 
       .placeholder {
@@ -188,7 +189,7 @@
 
     <section class="map-frame" aria-live="polite">
       <p id="placeholder" class="placeholder">No map loaded yet.</p>
-      <object id="map-image" class="map-content" type="image/svg+xml" aria-label="Uploaded SVG map" hidden></object>
+      <object id="map-image" class="map-content" type="image/svg+xml" hidden>Uploaded SVG map.</object>
     </section>
 
     <script>
@@ -275,7 +276,6 @@
           revokeCurrentUrl();
           currentUrl = URL.createObjectURL(new Blob([sanitizedContent], { type: 'image/svg+xml' }));
           image.data = currentUrl;
-          image.setAttribute('aria-label', `Uploaded SVG map: ${file.name}`);
           image.hidden = false;
           placeholder.hidden = true;
           setStatus(`Loaded: ${file.name}`);
