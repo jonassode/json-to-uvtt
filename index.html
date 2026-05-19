@@ -254,11 +254,11 @@
           const hexMatch = color.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/);
           if (hexMatch) {
             const hex = hexMatch[1];
-            const parseHexChannel = (hexValue) => Number.parseInt(hexValue, 16);
+            const parseHex = (hexValue) => Number.parseInt(hexValue, 16);
             const channels =
               hex.length === 3
-                ? hex.split('').map((hexChar) => parseHexChannel(hexChar.repeat(2)))
-                : [hex.slice(0, 2), hex.slice(2, 4), hex.slice(4, 6)].map((channelHex) => parseHexChannel(channelHex));
+                ? hex.split('').map((hexChar) => parseHex(hexChar.repeat(2)))
+                : [hex.slice(0, 2), hex.slice(2, 4), hex.slice(4, 6)].map((channelHex) => parseHex(channelHex));
             return channels.every(
               (channel) => Number.isFinite(channel) && channel <= MAX_NEAR_BLACK_CHANNEL_VALUE
             );
@@ -312,8 +312,38 @@
                 return length;
               }
             } catch (error) {
-              // Fall back to manual line length for unsupported geometry.
+              // Fall through to tag-specific fallback below.
             }
+          }
+
+          const tagName = node.tagName?.toLowerCase();
+          if (tagName === 'polyline') {
+            const points = (node.getAttribute('points') ?? '').trim();
+            if (!points) {
+              return Number.NaN;
+            }
+
+            const parsedPoints = points
+              .split(/[\s,]+/)
+              .map((value) => Number.parseFloat(value))
+              .filter((value) => Number.isFinite(value));
+            if (parsedPoints.length < 4 || parsedPoints.length % 2 !== 0) {
+              return Number.NaN;
+            }
+
+            let totalLength = 0;
+            for (let i = 2; i < parsedPoints.length; i += 2) {
+              const prevX = parsedPoints[i - 2];
+              const prevY = parsedPoints[i - 1];
+              const x = parsedPoints[i];
+              const y = parsedPoints[i + 1];
+              totalLength += Math.hypot(x - prevX, y - prevY);
+            }
+            return totalLength;
+          }
+
+          if (tagName !== 'line') {
+            return Number.NaN;
           }
 
           const x1 = Number.parseFloat(node.getAttribute('x1') ?? '0');
