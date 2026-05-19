@@ -155,13 +155,10 @@
         overflow: auto;
       }
 
-      .map-frame img {
+      #map-image {
         max-width: 100%;
         max-height: 100%;
-        width: auto;
-        height: auto;
         display: block;
-        object-fit: contain;
       }
 
       .placeholder {
@@ -189,7 +186,7 @@
 
     <section class="map-frame" aria-live="polite">
       <p id="placeholder" class="placeholder">No map loaded yet.</p>
-      <img id="map-image" alt="Uploaded SVG map" hidden />
+      <object id="map-image" type="image/svg+xml" aria-label="Uploaded SVG map" hidden>Your browser does not support SVG maps.</object>
     </section>
 
     <script>
@@ -229,7 +226,7 @@
       };
 
       const clearImage = () => {
-        image.removeAttribute('src');
+        image.removeAttribute('data');
         image.hidden = true;
         placeholder.hidden = false;
       };
@@ -275,8 +272,7 @@
 
           revokeCurrentUrl();
           currentUrl = URL.createObjectURL(new Blob([sanitizedContent], { type: 'image/svg+xml' }));
-          image.src = currentUrl;
-          image.alt = `Uploaded SVG map: ${file.name}`;
+          image.data = currentUrl;
           image.hidden = false;
           placeholder.hidden = true;
           setStatus(`Loaded: ${file.name}`);
