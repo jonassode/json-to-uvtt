@@ -451,7 +451,7 @@
        * Returns { dataUrl, cropX, cropY, cropW, cropH } where cropX/Y/W/H are
        * the captured region expressed in SVG user-unit coordinates.
        */
-      const renderSvgToDataUrl = (svgDoc, svgW, svgH) => new Promise((resolve) => {
+      const renderSvgToDataUrl = (svgDoc, svgW, svgH, ppg = 0) => new Promise((resolve) => {
         // Max canvas dimension; keeps memory reasonable and avoids GPU texture limits.
         const MAX = 4096;
         // Border added around the detected content, in output canvas pixels.
@@ -524,18 +524,37 @@
           const cw = px1 - px0;
           const ch = py1 - py0;
 
-          // Render the cropped region onto a new canvas.
-          const out = document.createElement('canvas');
-          out.width = cw;
-          out.height = ch;
-          out.getContext('2d').drawImage(canvas, px0, py0, cw, ch, 0, 0, cw, ch);
-
           // Convert pixel crop coordinates back to SVG user-unit space so the
           // caller can adjust geometry coordinates accordingly.
           const svgCropX = px0 * svgW / w;
           const svgCropY = py0 * svgH / h;
-          const svgCropW = cw * svgW / w;
-          const svgCropH = ch * svgH / h;
+          let svgCropW = cw * svgW / w;
+          let svgCropH = ch * svgH / h;
+
+          // Snap the crop to whole grid cells so map_size is always an integer.
+          // Any extra pixels are filled with the detected background colour.
+          let outCw = cw, outCh = ch;
+          if (ppg > 0) {
+            const gridW = Math.ceil(svgCropW / ppg);
+            const gridH = Math.ceil(svgCropH / ppg);
+            svgCropW = gridW * ppg;
+            svgCropH = gridH * ppg;
+            outCw = Math.round(svgCropW * w / svgW);
+            outCh = Math.round(svgCropH * h / svgH);
+          }
+
+          // Render the cropped region onto a new canvas.
+          const out = document.createElement('canvas');
+          out.width = outCw;
+          out.height = outCh;
+          const outCtx = out.getContext('2d');
+          if (outCw > cw || outCh > ch) {
+            // Fill the expanded area with the background colour so extra pixels
+            // are not black when JPEG-encoded.
+            outCtx.fillStyle = `rgb(${bgR},${bgG},${bgB})`;
+            outCtx.fillRect(0, 0, outCw, outCh);
+          }
+          outCtx.drawImage(canvas, px0, py0, cw, ch, 0, 0, cw, ch);
 
           try { resolve({ dataUrl: out.toDataURL('image/jpeg', 0.85), cropX: svgCropX, cropY: svgCropY, cropW: svgCropW, cropH: svgCropH }); }
           catch { full(); }
@@ -605,7 +624,7 @@
 
         // Render image with pixel-scan crop; returns SVG-space crop coordinates.
         const { dataUrl: imageData, cropX, cropY, cropW, cropH } =
-          await renderSvgToDataUrl(svgDoc, svgW, svgH);
+          await renderSvgToDataUrl(svgDoc, svgW, svgH, ppg);
 
         // Shift all geometry coordinates so (0,0) aligns with the top-left of the cropped image.
         const offsetX = cropX / ppg;
@@ -626,8 +645,8 @@
           resolution: {
             map_origin: { x: 0, y: 0 },
             map_size: {
-              x: +(cropW / ppg).toFixed(2),
-              y: +(cropH / ppg).toFixed(2),
+              x: Math.round(cropW / ppg),
+              y: Math.round(cropH / ppg),
             },
             pixels_per_grid: ppg,
           },
