@@ -242,6 +242,15 @@
             }
           });
         });
+        // Remove the visible border from shadow overlay elements.
+        // Shadow/hatching areas in VTT map SVGs use a pattern fill (fill="url(#…)")
+        // and often carry a stroke that renders as an unwanted border.
+        svgDocument.querySelectorAll('path, polygon, polyline').forEach((node) => {
+          const fill = node.getAttribute('fill') || '';
+          if (fill.startsWith('url(')) {
+            node.setAttribute('stroke', 'transparent');
+          }
+        });
         return new XMLSerializer().serializeToString(svgDocument);
       };
 
