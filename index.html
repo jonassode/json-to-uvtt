@@ -440,6 +440,65 @@
         }
       };
 
+      /** Multiply two SVG matrices [a,b,c,d,e,f]: returns A × B. */
+      const multiplyMatrix = (A, B) => [
+        A[0]*B[0] + A[2]*B[1],
+        A[1]*B[0] + A[3]*B[1],
+        A[0]*B[2] + A[2]*B[3],
+        A[1]*B[2] + A[3]*B[3],
+        A[0]*B[4] + A[2]*B[5] + A[4],
+        A[1]*B[4] + A[3]*B[5] + A[5],
+      ];
+
+      /** Parse an SVG transform attribute string into a single [a,b,c,d,e,f] matrix. */
+      const parseTransformAttr = (str) => {
+        let m = [1, 0, 0, 1, 0, 0];
+        if (!str) return m;
+        const re = /(translate|scale|rotate|skewX|skewY|matrix)\s*\(([^)]*)\)/g;
+        let match;
+        while ((match = re.exec(str)) !== null) {
+          const args = match[2].trim().split(/[\s,]+/).map(Number).filter(isFinite);
+          let t;
+          const deg2rad = Math.PI / 180;
+          switch (match[1]) {
+            case 'translate': t = [1, 0, 0, 1, args[0]||0, args[1]||0]; break;
+            case 'scale': { const sx = args[0]||1, sy = args.length >= 2 ? args[1] : sx; t = [sx, 0, 0, sy, 0, 0]; break; }
+            case 'rotate': {
+              const a = (args[0]||0) * deg2rad, cos = Math.cos(a), sin = Math.sin(a);
+              t = args.length >= 3
+                ? [cos, sin, -sin, cos, args[1]*(1-cos)+args[2]*sin, args[2]*(1-cos)-args[1]*sin]
+                : [cos, sin, -sin, cos, 0, 0];
+              break;
+            }
+            case 'skewX': t = [1, 0, Math.tan((args[0]||0)*deg2rad), 1, 0, 0]; break;
+            case 'skewY': t = [1, Math.tan((args[0]||0)*deg2rad), 0, 1, 0, 0]; break;
+            case 'matrix': t = args.slice(0, 6); break;
+            default: t = [1, 0, 0, 1, 0, 0];
+          }
+          m = multiplyMatrix(m, t);
+        }
+        return m;
+      };
+
+      /**
+       * Compose all ancestor transforms from el up to (but not including) svgRoot,
+       * returning a single [a,b,c,d,e,f] matrix that maps element-local coordinates
+       * to SVG user-unit (viewBox) coordinates.
+       */
+      const getElementMatrix = (el, svgRoot) => {
+        let m = [1, 0, 0, 1, 0, 0];
+        let node = el;
+        while (node && node !== svgRoot) {
+          const t = node.getAttribute && node.getAttribute('transform');
+          if (t) m = multiplyMatrix(parseTransformAttr(t), m);
+          node = node.parentNode;
+        }
+        return m;
+      };
+
+      /** Apply a [a,b,c,d,e,f] matrix to a [x, y] point. */
+      const applyMatrix = ([a, b, c, d, e, f], [x, y]) => [a*x + c*y + e, b*x + d*y + f];
+
       /**
        * Render svgDoc to a JPEG data-URL via an off-screen canvas, auto-cropped
        * to the visual content bounding box plus a 30-pixel border.
@@ -601,18 +660,21 @@
           );
           if (!isWall && !isDoor) return;
 
+          const elMatrix = getElementMatrix(el, svgEl);
+
           elementPolylines(el).forEach((pts) => {
             if (pts.length < 2) return;
+            const tPts = pts.map((pt) => applyMatrix(elMatrix, pt));
 
             if (isWall) {
               // Each line_of_sight entry must be a single 2-point segment.
-              const gridPts = pts.map(toGrid);
+              const gridPts = tPts.map(toGrid);
               for (let si = 0; si < gridPts.length - 1; si++) {
                 lineOfSight.push([gridPts[si], gridPts[si + 1]]);
               }
             } else {
-              const p0 = toGrid(pts[0]);
-              const p1 = toGrid(pts[pts.length - 1]);
+              const p0 = toGrid(tPts[0]);
+              const p1 = toGrid(tPts[tPts.length - 1]);
               portals.push({
                 position: {
                   x: +((p0.x + p1.x) / 2).toFixed(4),
