@@ -451,7 +451,7 @@
        * Returns { dataUrl, cropX, cropY, cropW, cropH } where cropX/Y/W/H are
        * the captured region expressed in SVG user-unit coordinates.
        */
-      const renderSvgToDataUrl = (svgDoc, svgW, svgH, ppg = 0, geoMinX = Infinity, geoMinY = Infinity) => new Promise((resolve) => {
+      const renderSvgToDataUrl = (svgDoc, svgW, svgH, ppg = 0) => new Promise((resolve) => {
         // Max canvas dimension; keeps memory reasonable and avoids GPU texture limits.
         const MAX = 4096;
         // Border added around the detected content, in output canvas pixels.
@@ -517,23 +517,10 @@
           if (maxX < 0) { full(); return; }
 
           // Add the pixel border and clamp to canvas bounds.
-          let px0 = Math.max(0, minX - BORDER);
-          let py0 = Math.max(0, minY - BORDER);
+          const px0 = Math.max(0, minX - BORDER);
+          const py0 = Math.max(0, minY - BORDER);
           const px1 = Math.min(w, maxX + BORDER + 1);
           const py1 = Math.min(h, maxY + BORDER + 1);
-
-          // Ensure the crop origin never starts AFTER the geometry extents.
-          // Wall/door coordinates come from raw SVG attributes and may appear
-          // before the visual content detected by the pixel scan, which would
-          // otherwise produce negative line-of-sight coordinates.
-          if (isFinite(geoMinX)) {
-            const geoPx0 = Math.max(0, Math.floor(geoMinX * w / svgW) - BORDER);
-            px0 = Math.min(px0, geoPx0);
-          }
-          if (isFinite(geoMinY)) {
-            const geoPy0 = Math.max(0, Math.floor(geoMinY * h / svgH) - BORDER);
-            py0 = Math.min(py0, geoPy0);
-          }
 
           const cw = px1 - px0;
           const ch = py1 - py0;
@@ -583,10 +570,13 @@
 
         // Determine canvas size from viewBox or width/height attributes
         let svgW = 0, svgH = 0;
+        let vbX = 0, vbY = 0;
         const vb = svgEl.getAttribute('viewBox');
         if (vb) {
           const p = vb.trim().split(/[\s,]+/).map(Number);
           if (p.length >= 4 && p.slice(2, 4).every(isFinite)) {
+            vbX = isFinite(p[0]) ? p[0] : 0;
+            vbY = isFinite(p[1]) ? p[1] : 0;
             svgW = p[2];
             svgH = p[3];
           }
@@ -602,7 +592,6 @@
 
         const lineOfSight = [];
         const portals = [];
-        let rawGeoMinX = Infinity, rawGeoMinY = Infinity;
 
         svgEl.querySelectorAll('path, line, polyline, polygon, rect').forEach((el) => {
           const isDoor = hasKeyword(el, 'door');
@@ -614,13 +603,6 @@
 
           elementPolylines(el).forEach((pts) => {
             if (pts.length < 2) return;
-
-            // Track raw SVG-unit bounding box so the image crop never starts
-            // past the geometry, which would produce negative LOS coordinates.
-            pts.forEach(([x, y]) => {
-              if (x < rawGeoMinX) rawGeoMinX = x;
-              if (y < rawGeoMinY) rawGeoMinY = y;
-            });
 
             if (isWall) {
               // Each line_of_sight entry must be a single 2-point segment.
@@ -647,11 +629,14 @@
 
         // Render image with pixel-scan crop; returns SVG-space crop coordinates.
         const { dataUrl: imageData, cropX, cropY, cropW, cropH } =
-          await renderSvgToDataUrl(svgDoc, svgW, svgH, ppg, rawGeoMinX, rawGeoMinY);
+          await renderSvgToDataUrl(svgDoc, svgW, svgH, ppg);
 
         // Shift all geometry coordinates so (0,0) aligns with the top-left of the cropped image.
-        const offsetX = cropX / ppg;
-        const offsetY = cropY / ppg;
+        // cropX/cropY are in SVG width/height units (distance from the viewBox left/top edge).
+        // Adding vbX/vbY converts them to absolute SVG path coordinate space so that
+        // the subtraction correctly accounts for any non-zero viewBox origin.
+        const offsetX = (vbX + cropX) / ppg;
+        const offsetY = (vbY + cropY) / ppg;
         const shiftCoord = ({ x, y }) => ({
           x: +(x - offsetX).toFixed(4),
           y: +(y - offsetY).toFixed(4),
