@@ -255,8 +255,8 @@
             const hex = hexMatch[1];
             const channels =
               hex.length === 3
-                ? hex.split('').map((ch) => Number.parseInt(ch.repeat(2), 16))
-                : [hex.slice(0, 2), hex.slice(2, 4), hex.slice(4, 6)].map((ch) => Number.parseInt(ch, 16));
+                ? hex.split('').map((hexChar) => Number.parseInt(hexChar.repeat(2), 16))
+                : [hex.slice(0, 2), hex.slice(2, 4), hex.slice(4, 6)].map((hexPair) => Number.parseInt(hexPair, 16));
             return channels.every(
               (channel) => Number.isFinite(channel) && channel <= MAX_NEAR_BLACK_CHANNEL_VALUE
             );
@@ -302,6 +302,12 @@
           return Math.hypot(x2 - x1, y2 - y1);
         };
 
+        const isArtifactLine = (stroke, length) =>
+          isNearBlack(stroke) &&
+          Number.isFinite(length) &&
+          length > 0 &&
+          length <= MAX_ARTIFACT_LINE_LENGTH;
+
         svgDocument.querySelectorAll('script, foreignObject').forEach((node) => node.remove());
         svgDocument.querySelectorAll('*').forEach((node) => {
           [...node.attributes].forEach((attribute) => {
@@ -316,7 +322,7 @@
         svgDocument.querySelectorAll('line').forEach((node) => {
           const stroke = getStrokeValue(node);
           const length = getLineLength(node);
-          if (isNearBlack(stroke) && Number.isFinite(length) && length > 0 && length <= MAX_ARTIFACT_LINE_LENGTH) {
+          if (isArtifactLine(stroke, length)) {
             node.remove();
           }
         });
