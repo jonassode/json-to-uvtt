@@ -253,10 +253,11 @@
           const hexMatch = color.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/);
           if (hexMatch) {
             const hex = hexMatch[1];
+            const parseHexChannel = (hexValue) => Number.parseInt(hexValue, 16);
             const channels =
               hex.length === 3
-                ? hex.split('').map((digit) => Number.parseInt(digit.repeat(2), 16))
-                : [hex.slice(0, 2), hex.slice(2, 4), hex.slice(4, 6)].map((channelHex) => Number.parseInt(channelHex, 16));
+                ? hex.split('').map((hexChar) => parseHexChannel(hexChar.repeat(2)))
+                : [hex.slice(0, 2), hex.slice(2, 4), hex.slice(4, 6)].map((channelHex) => parseHexChannel(channelHex));
             return channels.every(
               (channel) => Number.isFinite(channel) && channel <= MAX_NEAR_BLACK_CHANNEL_VALUE
             );
