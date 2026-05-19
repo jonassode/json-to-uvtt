@@ -281,10 +281,11 @@
         };
 
         const stylePropertyRegexCache = new Map();
+        const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const getStylePropertyValue = (style, propertyName) => {
           let propertyRegex = stylePropertyRegexCache.get(propertyName);
           if (!propertyRegex) {
-            propertyRegex = new RegExp(`(?:^|;)\\s*${propertyName}\\s*:\\s*([^;]+)`, 'i');
+            propertyRegex = new RegExp(`(?:^|;)\\s*${escapeRegex(propertyName)}\\s*:\\s*([^;]+)`, 'i');
             stylePropertyRegexCache.set(propertyName, propertyRegex);
           }
           const match = style.match(propertyRegex);
@@ -311,7 +312,7 @@
         };
 
         const getGeometryLength = (node) => {
-          if (typeof node.getTotalLength === 'function') {
+          if ('getTotalLength' in node && typeof node.getTotalLength === 'function') {
             try {
               const length = node.getTotalLength();
               if (Number.isFinite(length)) {
