@@ -232,6 +232,60 @@
       };
 
       const sanitizeSvg = (svgDocument) => {
+        const isNearBlack = (value) => {
+          if (!value) {
+            return false;
+          }
+          const color = value.trim().toLowerCase();
+          if (color === 'black' || color === '#000' || color === '#000000' || color === 'rgb(0,0,0)') {
+            return true;
+          }
+
+          const hexMatch = color.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+          if (hexMatch) {
+            const hex = hexMatch[1];
+            const channels =
+              hex.length === 3
+                ? hex.split('').map((ch) => Number.parseInt(`${ch}${ch}`, 16))
+                : [hex.slice(0, 2), hex.slice(2, 4), hex.slice(4, 6)].map((ch) => Number.parseInt(ch, 16));
+            return channels.every((channel) => Number.isFinite(channel) && channel <= 40);
+          }
+
+          const rgbMatch = color.match(/^rgba?\(([^)]+)\)$/);
+          if (!rgbMatch) {
+            return false;
+          }
+          const channels = rgbMatch[1]
+            .split(',')
+            .slice(0, 3)
+            .map((part) => Number.parseFloat(part.trim()));
+          return channels.length === 3 && channels.every((channel) => Number.isFinite(channel) && channel <= 40);
+        };
+
+        const getStrokeValue = (node) => {
+          const stroke = node.getAttribute('stroke');
+          if (stroke) {
+            return stroke;
+          }
+          const style = node.getAttribute('style');
+          if (!style) {
+            return '';
+          }
+          const match = style.match(/(?:^|;)\s*stroke\s*:\s*([^;]+)/i);
+          return match ? match[1] : '';
+        };
+
+        const getLineLength = (node) => {
+          const x1 = Number.parseFloat(node.getAttribute('x1') ?? '0');
+          const y1 = Number.parseFloat(node.getAttribute('y1') ?? '0');
+          const x2 = Number.parseFloat(node.getAttribute('x2') ?? '0');
+          const y2 = Number.parseFloat(node.getAttribute('y2') ?? '0');
+          if (![x1, y1, x2, y2].every(Number.isFinite)) {
+            return Number.NaN;
+          }
+          return Math.hypot(x2 - x1, y2 - y1);
+        };
+
         svgDocument.querySelectorAll('script, foreignObject').forEach((node) => node.remove());
         svgDocument.querySelectorAll('*').forEach((node) => {
           [...node.attributes].forEach((attribute) => {
@@ -242,6 +296,15 @@
             }
           });
         });
+
+        svgDocument.querySelectorAll('line').forEach((node) => {
+          const stroke = getStrokeValue(node);
+          const length = getLineLength(node);
+          if (isNearBlack(stroke) && Number.isFinite(length) && length > 0 && length <= 16) {
+            node.remove();
+          }
+        });
+
         return new XMLSerializer().serializeToString(svgDocument);
       };
 
