@@ -255,7 +255,7 @@
             const hex = hexMatch[1];
             const channels =
               hex.length === 3
-                ? hex.split('').map((ch) => Number.parseInt(`${ch}${ch}`, 16))
+                ? hex.split('').map((ch) => Number.parseInt(ch.repeat(2), 16))
                 : [hex.slice(0, 2), hex.slice(2, 4), hex.slice(4, 6)].map((ch) => Number.parseInt(ch, 16));
             return channels.every(
               (channel) => Number.isFinite(channel) && channel <= MAX_NEAR_BLACK_CHANNEL_VALUE
