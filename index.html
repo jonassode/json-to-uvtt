@@ -322,8 +322,8 @@
 
           if (tag === 'polyline') {
             const pts = (node.getAttribute('points') || '')
-              .trim().split(/[\s,]+/).map(Number).filter(Number.isFinite);
-            if (pts.length < 4 || pts.length % 2 !== 0) return NaN;
+              .trim().split(/[\s,]+/).map(Number);
+            if (pts.length < 4 || pts.length % 2 !== 0 || !pts.every(Number.isFinite)) return NaN;
             let len = 0;
             for (let i = 2; i < pts.length; i += 2) {
               len += Math.hypot(pts[i] - pts[i - 2], pts[i + 1] - pts[i - 1]);
@@ -357,23 +357,26 @@
         }
 
         // ── Remove artifact hatch lines ───────────────────────────────────────
-        svgDocument.querySelectorAll('line, polyline, path').forEach((node) => {
-          const len = getLength(node);
-          if (!Number.isFinite(len) || len <= 0 || len > maxHatchLength) return;
+        try {
+          svgDocument.querySelectorAll('line, polyline, path').forEach((node) => {
+            const len = getLength(node);
+            if (!Number.isFinite(len) || len <= 0 || len > maxHatchLength) return;
 
-          const stroke = getInherited(node, 'stroke');
-          const fill   = getInherited(node, 'fill');
-          const sw     = parseFloat(getInherited(node, 'stroke-width') || '1') || 1;
+            const stroke = getInherited(node, 'stroke');
+            const fill   = getInherited(node, 'fill');
+            const rawSw  = parseFloat(getInherited(node, 'stroke-width'));
+            const sw     = Number.isFinite(rawSw) ? rawSw : 1; // default per SVG spec
 
-          const isHatchStroke = isDark(stroke) && sw > 0 && sw <= MAX_STROKE_WIDTH;
-          const isHatchFill   = isDark(fill) && (!stroke || stroke === 'none');
+            const isHatchStroke = isDark(stroke) && sw > 0 && sw <= MAX_STROKE_WIDTH;
+            const isHatchFill   = isDark(fill) && (!stroke || stroke === 'none');
 
-          if (isHatchStroke || isHatchFill) {
-            node.remove();
-          }
-        });
-
-        document.body.removeChild(measureHost);
+            if (isHatchStroke || isHatchFill) {
+              node.remove();
+            }
+          });
+        } finally {
+          document.body.removeChild(measureHost);
+        }
         return new XMLSerializer().serializeToString(svgDocument);
       };
 
