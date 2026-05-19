@@ -232,169 +232,7 @@
       };
 
       const sanitizeSvg = (svgDocument) => {
-        const MAX_ARTIFACT_GEOMETRY_LENGTH = 80;
-        const MAX_ARTIFACT_STROKE_WIDTH = 4;
-        const MAX_NEAR_BLACK_CHANNEL_VALUE = 50;
-        const isFiniteNumber = (value) => Number.isFinite(value);
-
-        const isNearBlack = (value) => {
-          if (!value) {
-            return false;
-          }
-          const color = value.trim().toLowerCase();
-          if (
-            color === 'black' ||
-            color === '#000' ||
-            color === '#000000' ||
-            color === 'rgb(0,0,0)' ||
-            color === 'rgb(0, 0, 0)'
-          ) {
-            return true;
-          }
-
-          const hexMatch = color.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/);
-          if (hexMatch) {
-            const hex = hexMatch[1];
-            const parseHex = (hexValue) => Number.parseInt(hexValue, 16);
-            const parseHexChannels = () =>
-              hex.length === 3
-                ? hex.split('').map((hexChar) => parseHex(hexChar.repeat(2)))
-                : [hex.slice(0, 2), hex.slice(2, 4), hex.slice(4, 6)].map((hexPair) => parseHex(hexPair));
-            const channels = parseHexChannels();
-            return channels.every(
-              (channel) => Number.isFinite(channel) && channel <= MAX_NEAR_BLACK_CHANNEL_VALUE
-            );
-          }
-
-          const rgbMatch = color.match(/^rgba?\s*\(([^)]+)\)$/);
-          if (!rgbMatch) {
-            return false;
-          }
-          const channels = rgbMatch[1]
-            .split(',')
-            .slice(0, 3)
-            .map((part) => Number.parseFloat(part.trim()));
-          return (
-            channels.length === 3 &&
-            channels.every(
-              (channel) => Number.isFinite(channel) && channel <= MAX_NEAR_BLACK_CHANNEL_VALUE
-            )
-          );
-        };
-
-        const stylePropertyRegexCache = new Map();
-        const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const getStylePropertyValue = (style, propertyName) => {
-          let propertyRegex = stylePropertyRegexCache.get(propertyName);
-          if (!propertyRegex) {
-            propertyRegex = new RegExp(`(?:^|;)\\s*${escapeRegex(propertyName)}\\s*:\\s*([^;]+)`, 'i');
-            stylePropertyRegexCache.set(propertyName, propertyRegex);
-          }
-          const match = style.match(propertyRegex);
-          return match ? match[1].trim() : '';
-        };
-
-        const getPresentationValue = (node, propertyName) => {
-          let currentNode = node;
-          while (currentNode && currentNode.nodeType === 1) {
-            const value = currentNode.getAttribute(propertyName);
-            if (value && value.trim()) {
-              return value.trim();
-            }
-            const style = currentNode.getAttribute('style');
-            if (style) {
-              const styleValue = getStylePropertyValue(style, propertyName);
-              if (styleValue) {
-                return styleValue;
-              }
-            }
-            currentNode = currentNode.parentElement;
-          }
-          return '';
-        };
-
-        const getGeometryLength = (node) => {
-          if ('getTotalLength' in node && typeof node.getTotalLength === 'function') {
-            try {
-              const length = node.getTotalLength();
-              if (Number.isFinite(length)) {
-                return length;
-              }
-            } catch (error) {
-              // Falls through to tag-specific fallback below.
-            }
-          }
-
-          const tagName = node.tagName?.toLowerCase();
-          if (tagName === 'polyline') {
-            const points = (node.getAttribute('points') ?? '').trim();
-            if (!points) {
-              return Number.NaN;
-            }
-
-            const parsedPoints = points
-              .split(/[\s,]+/)
-              .map((value) => Number.parseFloat(value))
-              .filter((value) => Number.isFinite(value));
-            if (parsedPoints.length < 4 || parsedPoints.length % 2 !== 0) {
-              return Number.NaN;
-            }
-
-            let totalLength = 0;
-            for (let i = 2; i < parsedPoints.length; i += 2) {
-              const prevX = parsedPoints[i - 2];
-              const prevY = parsedPoints[i - 1];
-              const x = parsedPoints[i];
-              const y = parsedPoints[i + 1];
-              totalLength += Math.hypot(x - prevX, y - prevY);
-            }
-            return totalLength;
-          }
-
-          if (tagName !== 'line') {
-            return Number.NaN;
-          }
-
-          const x1 = Number.parseFloat(node.getAttribute('x1') ?? '0');
-          const y1 = Number.parseFloat(node.getAttribute('y1') ?? '0');
-          const x2 = Number.parseFloat(node.getAttribute('x2') ?? '0');
-          const y2 = Number.parseFloat(node.getAttribute('y2') ?? '0');
-          if (![x1, y1, x2, y2].every(isFiniteNumber)) {
-            return Number.NaN;
-          }
-          return Math.hypot(x2 - x1, y2 - y1);
-        };
-
-        // Returns the effective stroke-width, defaulting to 1 (the SVG spec default) when absent.
-        const getEffectiveStrokeWidth = (node) => {
-          const raw = getPresentationValue(node, 'stroke-width');
-          const parsed = Number.parseFloat(raw);
-          return Number.isFinite(parsed) ? parsed : 1;
-        };
-
-        const isArtifactElement = (node, length) => {
-          if (!Number.isFinite(length) || length <= 0 || length > MAX_ARTIFACT_GEOMETRY_LENGTH) {
-            return false;
-          }
-
-          const stroke = getPresentationValue(node, 'stroke');
-          const strokeWidth = getEffectiveStrokeWidth(node);
-          const fill = getPresentationValue(node, 'fill');
-
-          // A near-black stroked line with a thin stroke counts as an artifact.
-          const isArtifactStroke =
-            isNearBlack(stroke) &&
-            strokeWidth > 0 &&
-            strokeWidth <= MAX_ARTIFACT_STROKE_WIDTH;
-
-          // A near-black filled shape with no meaningful stroke also counts.
-          const isArtifactFill =
-            isNearBlack(fill) &&
-            (!stroke || stroke === 'none');
-
-          return isArtifactStroke || isArtifactFill;
-        };
-
+        // ── Security ─────────────────────────────────────────────────────────
         svgDocument.querySelectorAll('script, foreignObject').forEach((node) => node.remove());
         svgDocument.querySelectorAll('*').forEach((node) => {
           [...node.attributes].forEach((attribute) => {
@@ -406,13 +244,136 @@
           });
         });
 
+        // ── Helpers ───────────────────────────────────────────────────────────
+
+        // Walk up the ancestor chain to resolve an inherited presentation property.
+        const getInherited = (node, prop) => {
+          let el = node;
+          while (el && el.nodeType === 1) {
+            const attr = el.getAttribute(prop);
+            if (attr && attr.trim()) return attr.trim();
+            const style = el.getAttribute('style') || '';
+            const m = style.match(new RegExp(`(?:^|;)\\s*${prop}\\s*:\\s*([^;]+)`, 'i'));
+            if (m) return m[1].trim();
+            el = el.parentElement;
+          }
+          return '';
+        };
+
+        // Returns true for any dark / near-black colour value.
+        const DARK_CHANNEL_MAX = 80;
+        const isDark = (color) => {
+          if (!color || color === 'none') return false;
+          const c = color.trim().toLowerCase();
+          if (c === 'black' || c === '#000' || c === '#000000') return true;
+          const hex6 = c.match(/^#([0-9a-f]{6})$/);
+          if (hex6) {
+            const n = parseInt(hex6[1], 16);
+            return ((n >> 16) & 0xff) <= DARK_CHANNEL_MAX &&
+                   ((n >>  8) & 0xff) <= DARK_CHANNEL_MAX &&
+                   ( n        & 0xff) <= DARK_CHANNEL_MAX;
+          }
+          const hex3 = c.match(/^#([0-9a-f]{3})$/);
+          if (hex3) {
+            const [r, g, b] = [...hex3[1]].map((ch) => parseInt(ch.repeat(2), 16));
+            return r <= DARK_CHANNEL_MAX && g <= DARK_CHANNEL_MAX && b <= DARK_CHANNEL_MAX;
+          }
+          const rgb = c.match(/^rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/);
+          if (rgb) return +rgb[1] <= DARK_CHANNEL_MAX && +rgb[2] <= DARK_CHANNEL_MAX && +rgb[3] <= DARK_CHANNEL_MAX;
+          return false;
+        };
+
+        // ── Length measurement via a hidden live-DOM SVG ──────────────────────
+        // getTotalLength() on elements inside a DOMParser document (not connected
+        // to the page) is unreliable in many browsers – it returns 0 or NaN for
+        // <path> elements.  By temporarily parenting a clone into a real (hidden)
+        // SVG element we get accurate geometry from the browser's layout engine.
+        const measureHost = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        measureHost.style.cssText =
+          'position:absolute;visibility:hidden;pointer-events:none;width:0;height:0;overflow:hidden';
+        document.body.appendChild(measureHost);
+
+        const measurePathLength = (d) => {
+          if (!d) return NaN;
+          try {
+            const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            p.setAttribute('d', d);
+            measureHost.appendChild(p);
+            const len = p.getTotalLength();
+            measureHost.removeChild(p);
+            return Number.isFinite(len) ? len : NaN;
+          } catch (_) {
+            return NaN;
+          }
+        };
+
+        const getLength = (node) => {
+          const tag = (node.tagName || '').toLowerCase();
+
+          if (tag === 'line') {
+            const x1 = parseFloat(node.getAttribute('x1') || '0');
+            const y1 = parseFloat(node.getAttribute('y1') || '0');
+            const x2 = parseFloat(node.getAttribute('x2') || '0');
+            const y2 = parseFloat(node.getAttribute('y2') || '0');
+            return Number.isFinite(x1) && Number.isFinite(y1) && Number.isFinite(x2) && Number.isFinite(y2)
+              ? Math.hypot(x2 - x1, y2 - y1)
+              : NaN;
+          }
+
+          if (tag === 'polyline') {
+            const pts = (node.getAttribute('points') || '')
+              .trim().split(/[\s,]+/).map(Number).filter(Number.isFinite);
+            if (pts.length < 4 || pts.length % 2 !== 0) return NaN;
+            let len = 0;
+            for (let i = 2; i < pts.length; i += 2) {
+              len += Math.hypot(pts[i] - pts[i - 2], pts[i + 1] - pts[i - 1]);
+            }
+            return len;
+          }
+
+          if (tag === 'path') {
+            return measurePathLength(node.getAttribute('d'));
+          }
+
+          return NaN;
+        };
+
+        // ── Determine the scale-invariant length threshold ────────────────────
+        // Use the viewBox diagonal so the threshold adapts to any map coordinate
+        // space rather than relying on hard-coded pixel counts.
+        // Shadow / edge-hatch marks are typically ≤ 1.5 % of the map diagonal;
+        // intentional decorative hatching at the map border is noticeably longer.
+        const HATCH_FRACTION = 0.015; // 1.5 % of the viewBox diagonal
+        const MAX_STROKE_WIDTH = 3;
+
+        let maxHatchLength = 50; // absolute fallback (px) if viewBox is missing
+        const svgRoot = svgDocument.documentElement;
+        const vb = svgRoot.getAttribute('viewBox');
+        if (vb) {
+          const [, , vbW, vbH] = vb.trim().split(/[\s,]+/).map(parseFloat);
+          if (Number.isFinite(vbW) && Number.isFinite(vbH) && vbW > 0 && vbH > 0) {
+            maxHatchLength = Math.hypot(vbW, vbH) * HATCH_FRACTION;
+          }
+        }
+
+        // ── Remove artifact hatch lines ───────────────────────────────────────
         svgDocument.querySelectorAll('line, polyline, path').forEach((node) => {
-          const length = getGeometryLength(node);
-          if (isArtifactElement(node, length)) {
+          const len = getLength(node);
+          if (!Number.isFinite(len) || len <= 0 || len > maxHatchLength) return;
+
+          const stroke = getInherited(node, 'stroke');
+          const fill   = getInherited(node, 'fill');
+          const sw     = parseFloat(getInherited(node, 'stroke-width') || '1') || 1;
+
+          const isHatchStroke = isDark(stroke) && sw > 0 && sw <= MAX_STROKE_WIDTH;
+          const isHatchFill   = isDark(fill) && (!stroke || stroke === 'none');
+
+          if (isHatchStroke || isHatchFill) {
             node.remove();
           }
         });
 
+        document.body.removeChild(measureHost);
         return new XMLSerializer().serializeToString(svgDocument);
       };
 
