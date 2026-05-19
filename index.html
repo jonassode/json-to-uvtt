@@ -232,6 +232,8 @@
       };
 
       const sanitizeSvg = (svgDocument) => {
+        const MAX_ARTIFACT_LINE_LENGTH = 16;
+
         const isNearBlack = (value) => {
           if (!value) {
             return false;
@@ -241,7 +243,7 @@
             return true;
           }
 
-          const hexMatch = color.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+          const hexMatch = color.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/);
           if (hexMatch) {
             const hex = hexMatch[1];
             const channels =
@@ -251,7 +253,7 @@
             return channels.every((channel) => Number.isFinite(channel) && channel <= 40);
           }
 
-          const rgbMatch = color.match(/^rgba?\(([^)]+)\)$/);
+          const rgbMatch = color.match(/^rgba?\s*\(([^)]+)\)$/);
           if (!rgbMatch) {
             return false;
           }
@@ -300,7 +302,7 @@
         svgDocument.querySelectorAll('line').forEach((node) => {
           const stroke = getStrokeValue(node);
           const length = getLineLength(node);
-          if (isNearBlack(stroke) && Number.isFinite(length) && length > 0 && length <= 16) {
+          if (isNearBlack(stroke) && Number.isFinite(length) && length > 0 && length <= MAX_ARTIFACT_LINE_LENGTH) {
             node.remove();
           }
         });
