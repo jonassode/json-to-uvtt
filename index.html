@@ -126,6 +126,15 @@
         background: #fef6dd;
       }
 
+      button.upload {
+        font-family: inherit;
+      }
+
+      button.upload:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+
       input[type="file"] {
         position: absolute;
         width: 1px;
@@ -180,6 +189,9 @@
           <label class="upload" for="svg-upload">Upload SVG Map</label>
           <input id="svg-upload" type="file" accept=".svg,image/svg+xml" />
         </div>
+        <div class="menu-item menu-item-action">
+          <button id="export-uvtt" class="upload" disabled>Export to .uvtt</button>
+        </div>
         <p id="status" class="menu-status">Choose an SVG file to render the map.</p>
       </div>
     </header>
@@ -196,7 +208,10 @@
       const placeholder = document.getElementById('placeholder');
       const menuBtn = document.getElementById('menu-btn');
       const menuDropdown = document.getElementById('menu-dropdown');
+      const exportBtn = document.getElementById('export-uvtt');
       let currentUrl = '';
+      let parsedSvgDoc = null;
+      let svgExportName = '';
 
       // Hamburger toggle
       menuBtn.addEventListener('click', (e) => {
@@ -229,6 +244,9 @@
         image.removeAttribute('data');
         image.hidden = true;
         placeholder.hidden = false;
+        parsedSvgDoc = null;
+        svgExportName = '';
+        exportBtn.disabled = true;
       };
 
       const sanitizeSvg = (svgDocument) => {
@@ -275,12 +293,274 @@
           image.data = currentUrl;
           image.hidden = false;
           placeholder.hidden = true;
+          parsedSvgDoc = parsed;
+          svgExportName = file.name.replace(/\.svg$/i, '');
+          exportBtn.disabled = false;
           setStatus(`Loaded: ${file.name}`);
         } catch (error) {
           console.error(error);
           revokeCurrentUrl();
           clearImage();
           setStatus('Could not read this SVG file.', true);
+        }
+      });
+
+      // ── SVG → UVTT conversion ────────────────────────────────────────────────
+
+      const PIXELS_PER_GRID = 70;
+      const WALL_STROKE_THRESHOLD = 3;
+
+      /** Return true if el or any ancestor has class/id containing kw. */
+      const hasKeyword = (el, kw) => {
+        let node = el;
+        while (node && node.getAttribute) {
+          if (
+            (node.getAttribute('class') || '').toLowerCase().includes(kw) ||
+            (node.getAttribute('id') || '').toLowerCase().includes(kw)
+          ) return true;
+          node = node.parentNode;
+        }
+        return false;
+      };
+
+      /** Get the numeric stroke-width from inline style or attribute. */
+      const getStrokeWidth = (el) => {
+        const m = (el.getAttribute('style') || '').match(/stroke-width\s*:\s*([\d.]+)/);
+        if (m) return parseFloat(m[1]);
+        const sw = el.getAttribute('stroke-width');
+        return sw ? parseFloat(sw) : 1;
+      };
+
+      /** Parse a "points" attribute string into [[x,y], ...]. */
+      const parseSvgPoints = (str) => {
+        const nums = (str || '').trim().split(/[\s,]+/).map(Number).filter(isFinite);
+        const pts = [];
+        for (let i = 0; i + 1 < nums.length; i += 2) pts.push([nums[i], nums[i + 1]]);
+        return pts;
+      };
+
+      /**
+       * Parse an SVG path "d" attribute into an array of polylines.
+       * Each polyline is an array of [x, y] pairs.
+       * Bezier curves are approximated by their end-points only.
+       */
+      const parseSvgPath = (d) => {
+        const polylines = [];
+        let pts = [];
+        let cx = 0, cy = 0, sx = 0, sy = 0;
+
+        const toks = d.match(
+          /([MmZzLlHhVvCcSsQqTtAa])|([+-]?(?:(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?))/g
+        ) || [];
+        let i = 0;
+        let cmd = '';
+
+        const isCmd = (t) => /[MmZzLlHhVvCcSsQqTtAa]/.test(t);
+        const n = () => (i < toks.length && !isCmd(toks[i])) ? parseFloat(toks[i++]) : 0;
+
+        const add = (x, y) => {
+          const last = pts[pts.length - 1];
+          if (!last || last[0] !== x || last[1] !== y) pts.push([x, y]);
+        };
+
+        const flush = () => {
+          if (pts.length >= 2) polylines.push(pts);
+          pts = [];
+        };
+
+        while (i < toks.length) {
+          if (isCmd(toks[i])) {
+            cmd = toks[i++];
+            if (cmd === 'Z' || cmd === 'z') {
+              add(sx, sy);
+              flush();
+              cx = sx; cy = sy;
+            }
+            continue;
+          }
+          switch (cmd) {
+            case 'M': flush(); cx = n(); cy = n(); sx = cx; sy = cy; add(cx, cy); cmd = 'L'; break;
+            case 'm': flush(); cx += n(); cy += n(); sx = cx; sy = cy; add(cx, cy); cmd = 'l'; break;
+            case 'L': add(cx, cy); cx = n(); cy = n(); add(cx, cy); break;
+            case 'l': add(cx, cy); cx += n(); cy += n(); add(cx, cy); break;
+            case 'H': add(cx, cy); cx = n(); add(cx, cy); break;
+            case 'h': add(cx, cy); cx += n(); add(cx, cy); break;
+            case 'V': add(cx, cy); cy = n(); add(cx, cy); break;
+            case 'v': add(cx, cy); cy += n(); add(cx, cy); break;
+            case 'C': n(); n(); n(); n(); cx = n(); cy = n(); add(cx, cy); break;
+            case 'c': n(); n(); n(); n(); cx += n(); cy += n(); add(cx, cy); break;
+            case 'S': n(); n(); cx = n(); cy = n(); add(cx, cy); break;
+            case 's': n(); n(); cx += n(); cy += n(); add(cx, cy); break;
+            case 'Q': n(); n(); cx = n(); cy = n(); add(cx, cy); break;
+            case 'q': n(); n(); cx += n(); cy += n(); add(cx, cy); break;
+            case 'T': cx = n(); cy = n(); add(cx, cy); break;
+            case 't': cx += n(); cy += n(); add(cx, cy); break;
+            case 'A': n(); n(); n(); n(); n(); cx = n(); cy = n(); add(cx, cy); break;
+            case 'a': n(); n(); n(); n(); n(); cx += n(); cy += n(); add(cx, cy); break;
+            default: i++; break;
+          }
+        }
+        if (pts.length >= 2) polylines.push(pts);
+        return polylines;
+      };
+
+      /** Convert a single SVG element to an array of polylines. */
+      const elementPolylines = (el) => {
+        const tag = (el.localName || el.tagName || '').toLowerCase().replace(/^[^:]+:/, '');
+        switch (tag) {
+          case 'path':
+            return parseSvgPath(el.getAttribute('d') || '');
+          case 'line': {
+            const x1 = parseFloat(el.getAttribute('x1')) || 0;
+            const y1 = parseFloat(el.getAttribute('y1')) || 0;
+            const x2 = parseFloat(el.getAttribute('x2')) || 0;
+            const y2 = parseFloat(el.getAttribute('y2')) || 0;
+            return [[[x1, y1], [x2, y2]]];
+          }
+          case 'polyline': {
+            const pts = parseSvgPoints(el.getAttribute('points'));
+            return pts.length >= 2 ? [pts] : [];
+          }
+          case 'polygon': {
+            const pts = parseSvgPoints(el.getAttribute('points'));
+            return pts.length >= 2 ? [[...pts, pts[0]]] : [];
+          }
+          case 'rect': {
+            const x = parseFloat(el.getAttribute('x')) || 0;
+            const y = parseFloat(el.getAttribute('y')) || 0;
+            const w = parseFloat(el.getAttribute('width')) || 0;
+            const h = parseFloat(el.getAttribute('height')) || 0;
+            return [[[x, y], [x + w, y], [x + w, y + h], [x, y + h], [x, y]]];
+          }
+          default: return [];
+        }
+      };
+
+      /** Render svgDoc to a JPEG data-URL via an off-screen canvas. */
+      const renderSvgToDataUrl = (svgDoc, svgW, svgH) => new Promise((resolve) => {
+        const MAX = 4096;
+        let w = svgW, h = svgH;
+        if (w > MAX || h > MAX) {
+          const s = Math.min(MAX / w, MAX / h);
+          w = Math.round(w * s);
+          h = Math.round(h * s);
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        const svgStr = new XMLSerializer().serializeToString(svgDoc);
+        const blob = new Blob([svgStr], { type: 'image/svg+xml' });
+        const url = URL.createObjectURL(blob);
+        const img = new Image();
+        img.onload = () => {
+          ctx.drawImage(img, 0, 0, w, h);
+          URL.revokeObjectURL(url);
+          try { resolve(canvas.toDataURL('image/jpeg', 0.85)); }
+          catch { resolve(''); }
+        };
+        img.onerror = () => { URL.revokeObjectURL(url); resolve(''); };
+        img.src = url;
+      });
+
+      /** Convert a parsed SVG document to a Universal VTT object. */
+      const convertSvgToUvtt = async (svgDoc) => {
+        const svgEl = svgDoc.documentElement;
+
+        // Determine canvas size from viewBox or width/height attributes
+        let svgW = 0, svgH = 0;
+        const vb = svgEl.getAttribute('viewBox');
+        if (vb) {
+          const p = vb.trim().split(/[\s,]+/).map(Number);
+          svgW = p[2] || 0;
+          svgH = p[3] || 0;
+        }
+        if (!svgW) svgW = parseFloat(svgEl.getAttribute('width')) || 1000;
+        if (!svgH) svgH = parseFloat(svgEl.getAttribute('height')) || 1000;
+
+        const ppg = PIXELS_PER_GRID;
+        const toGrid = ([x, y]) => ({
+          x: +(x / ppg).toFixed(4),
+          y: +(y / ppg).toFixed(4),
+        });
+
+        const lineOfSight = [];
+        const portals = [];
+
+        svgEl.querySelectorAll('path, line, polyline, polygon, rect').forEach((el) => {
+          const isDoor = hasKeyword(el, 'door');
+          const isWall = !isDoor && (
+            hasKeyword(el, 'wall') ||
+            getStrokeWidth(el) >= WALL_STROKE_THRESHOLD
+          );
+          if (!isWall && !isDoor) return;
+
+          elementPolylines(el).forEach((pts) => {
+            if (pts.length < 2) return;
+            if (isWall) {
+              lineOfSight.push(pts.map(toGrid));
+            } else {
+              const p0 = toGrid(pts[0]);
+              const p1 = toGrid(pts[pts.length - 1]);
+              portals.push({
+                position: {
+                  x: +((p0.x + p1.x) / 2).toFixed(4),
+                  y: +((p0.y + p1.y) / 2).toFixed(4),
+                },
+                bounds: [p0, p1],
+                rotation: 0,
+                closed: true,
+                freestanding: false,
+              });
+            }
+          });
+        });
+
+        const imageData = await renderSvgToDataUrl(svgDoc, svgW, svgH);
+
+        return {
+          format: 0.3,
+          resolution: {
+            map_origin: { x: 0, y: 0 },
+            map_size: {
+              x: +(svgW / ppg).toFixed(2),
+              y: +(svgH / ppg).toFixed(2),
+            },
+            pixels_per_grid: ppg,
+          },
+          line_of_sight: lineOfSight,
+          portals,
+          environment: { baked_lighting: false, ambient_light: 'ffffffff' },
+          image: imageData,
+        };
+      };
+
+      // ── Export button ────────────────────────────────────────────────────────
+
+      exportBtn.addEventListener('click', async () => {
+        if (!parsedSvgDoc) return;
+        menuDropdown.classList.remove('open');
+        menuBtn.setAttribute('aria-expanded', 'false');
+        exportBtn.disabled = true;
+        setStatus('Exporting…');
+        try {
+          const uvtt = await convertSvgToUvtt(parsedSvgDoc);
+          const json = JSON.stringify(uvtt, null, 2);
+          const blob = new Blob([json], { type: 'application/octet-stream' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = (svgExportName || 'map') + '.uvtt';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          setStatus(`Exported: ${svgExportName || 'map'}.uvtt`);
+        } catch (err) {
+          console.error(err);
+          setStatus('Export failed.', true);
+        } finally {
+          exportBtn.disabled = false;
         }
       });
 
