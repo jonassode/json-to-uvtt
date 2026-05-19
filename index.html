@@ -10,38 +10,116 @@
         font-family: Inter, "Segoe UI", Arial, sans-serif;
       }
 
+      *, *::before, *::after {
+        box-sizing: border-box;
+      }
+
       body {
         margin: 0;
-        min-height: 100vh;
-        display: grid;
-        place-items: center;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
         background: #f4efe1;
         color: #201f1c;
+        overflow: hidden;
       }
 
-      main {
-        width: min(1100px, 94vw);
-        display: grid;
-        gap: 1rem;
-      }
-
-      .controls {
+      /* ── Top bar ── */
+      .topbar {
         display: flex;
         align-items: center;
-        gap: 1rem;
-        flex-wrap: wrap;
+        justify-content: space-between;
+        padding: 0 1rem;
+        height: 3rem;
+        background: #fffaf0;
+        border-bottom: 1px solid #c8c0b0;
+        flex-shrink: 0;
+        position: relative;
+        z-index: 100;
+      }
+
+      .topbar-title {
+        font-weight: 700;
+        font-size: 1rem;
+        letter-spacing: 0.01em;
+      }
+
+      /* Hamburger button */
+      .menu-btn {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 5px;
+        width: 2.2rem;
+        height: 2.2rem;
+        padding: 0.35rem;
+        border: 1px solid #201f1c;
+        border-radius: 0.4rem;
+        background: transparent;
+        cursor: pointer;
+        flex-shrink: 0;
+      }
+
+      .menu-btn:hover {
+        background: #fef6dd;
+      }
+
+      .menu-btn span {
+        display: block;
+        height: 2px;
+        background: #201f1c;
+        border-radius: 2px;
+      }
+
+      /* Dropdown menu */
+      .menu-dropdown {
+        display: none;
+        position: absolute;
+        top: calc(3rem + 2px);
+        right: 1rem;
+        background: #fffaf0;
+        border: 1px solid #c8c0b0;
+        border-radius: 0.5rem;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+        padding: 0.5rem;
+        min-width: 14rem;
+        z-index: 200;
+      }
+
+      .menu-dropdown.open {
+        display: block;
+      }
+
+      .menu-item-upload {
+        padding: 0.3rem 0.5rem;
+      }
+
+      .menu-item {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        padding: 0.55rem 0.75rem;
+        border-radius: 0.35rem;
+        font-size: 0.95rem;
+        cursor: pointer;
+      }
+
+      .menu-item:hover {
+        background: #fef6dd;
       }
 
       .upload {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        padding: 0.65rem 1rem;
+        padding: 0.55rem 0.9rem;
         border: 1px solid #201f1c;
-        border-radius: 0.5rem;
+        border-radius: 0.4rem;
         background: #fffaf0;
         font-weight: 600;
+        font-size: 0.9rem;
         cursor: pointer;
+        width: 100%;
       }
 
       .upload:hover {
@@ -57,31 +135,33 @@
         white-space: nowrap;
       }
 
-      .status {
-        margin: 0;
-        font-size: 0.95rem;
+      .menu-status {
+        margin: 0.35rem 0.75rem 0.2rem;
+        font-size: 0.85rem;
+        color: #6c675c;
+        word-break: break-all;
       }
 
-      .status.error {
+      .menu-status.error {
         color: #b00020;
       }
 
+      /* ── Map area ── */
       .map-frame {
-        border: 2px solid #201f1c;
-        border-radius: 0.5rem;
+        flex: 1 1 0;
         background: #ece5d4;
-        min-height: 60vh;
         display: grid;
         place-items: center;
         overflow: auto;
-        padding: 0.75rem;
       }
 
       .map-frame img {
         max-width: 100%;
-        max-height: 78vh;
+        max-height: 100%;
+        width: auto;
         height: auto;
         display: block;
+        object-fit: contain;
       }
 
       .placeholder {
@@ -91,25 +171,50 @@
     </style>
   </head>
   <body>
-    <main>
-      <section class="controls">
-        <label class="upload" for="svg-upload">Upload SVG Map</label>
-        <input id="svg-upload" type="file" accept=".svg,image/svg+xml" />
-        <p id="status" class="status">Choose an SVG file to render the map.</p>
-      </section>
+    <header class="topbar">
+      <span class="topbar-title">SVG Map Viewer</span>
+      <button class="menu-btn" id="menu-btn" aria-label="Open menu" aria-expanded="false" aria-controls="menu-dropdown">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+      <div class="menu-dropdown" id="menu-dropdown" role="menu">
+        <div class="menu-item menu-item-upload">
+          <label class="upload" for="svg-upload">Upload SVG Map</label>
+          <input id="svg-upload" type="file" accept=".svg,image/svg+xml" />
+        </div>
+        <p id="status" class="menu-status">Choose an SVG file to render the map.</p>
+      </div>
+    </header>
 
-      <section class="map-frame" aria-live="polite">
-        <p id="placeholder" class="placeholder">No map loaded yet.</p>
-        <img id="map-image" alt="Uploaded SVG map" hidden />
-      </section>
-    </main>
+    <section class="map-frame" aria-live="polite">
+      <p id="placeholder" class="placeholder">No map loaded yet.</p>
+      <img id="map-image" alt="Uploaded SVG map" hidden />
+    </section>
 
     <script>
       const input = document.getElementById('svg-upload');
       const status = document.getElementById('status');
       const image = document.getElementById('map-image');
       const placeholder = document.getElementById('placeholder');
+      const menuBtn = document.getElementById('menu-btn');
+      const menuDropdown = document.getElementById('menu-dropdown');
       let currentUrl = '';
+
+      // Hamburger toggle
+      menuBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isOpen = menuDropdown.classList.toggle('open');
+        menuBtn.setAttribute('aria-expanded', String(isOpen));
+        menuBtn.setAttribute('aria-label', isOpen ? 'Close menu' : 'Open menu');
+      });
+
+      document.addEventListener('click', (e) => {
+        if (!menuDropdown.contains(e.target) && !menuBtn.contains(e.target)) {
+          menuDropdown.classList.remove('open');
+          menuBtn.setAttribute('aria-expanded', 'false');
+        }
+      });
 
       const setStatus = (message, isError = false) => {
         status.textContent = message;
