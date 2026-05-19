@@ -232,9 +232,9 @@
       };
 
       const sanitizeSvg = (svgDocument) => {
-        const MAX_ARTIFACT_GEOMETRY_LENGTH = 48;
-        const MAX_ARTIFACT_STROKE_WIDTH = 2.25;
-        const MAX_NEAR_BLACK_CHANNEL_VALUE = 40;
+        const MAX_ARTIFACT_GEOMETRY_LENGTH = 80;
+        const MAX_ARTIFACT_STROKE_WIDTH = 4;
+        const MAX_NEAR_BLACK_CHANNEL_VALUE = 50;
         const isFiniteNumber = (value) => Number.isFinite(value);
 
         const isNearBlack = (value) => {
@@ -365,14 +365,35 @@
           return Math.hypot(x2 - x1, y2 - y1);
         };
 
-        const isArtifactLine = (stroke, strokeWidth, length) =>
-          isNearBlack(stroke) &&
-          Number.isFinite(strokeWidth) &&
-          strokeWidth > 0 &&
-          strokeWidth <= MAX_ARTIFACT_STROKE_WIDTH &&
-          Number.isFinite(length) &&
-          length > 0 &&
-          length <= MAX_ARTIFACT_GEOMETRY_LENGTH;
+        // Returns the effective stroke-width, defaulting to 1 (the SVG spec default) when absent.
+        const getEffectiveStrokeWidth = (node) => {
+          const raw = getPresentationValue(node, 'stroke-width');
+          const parsed = Number.parseFloat(raw);
+          return Number.isFinite(parsed) ? parsed : 1;
+        };
+
+        const isArtifactElement = (node, length) => {
+          if (!Number.isFinite(length) || length <= 0 || length > MAX_ARTIFACT_GEOMETRY_LENGTH) {
+            return false;
+          }
+
+          const stroke = getPresentationValue(node, 'stroke');
+          const strokeWidth = getEffectiveStrokeWidth(node);
+          const fill = getPresentationValue(node, 'fill');
+
+          // A near-black stroked line with a thin stroke counts as an artifact.
+          const isArtifactStroke =
+            isNearBlack(stroke) &&
+            strokeWidth > 0 &&
+            strokeWidth <= MAX_ARTIFACT_STROKE_WIDTH;
+
+          // A near-black filled shape with no meaningful stroke also counts.
+          const isArtifactFill =
+            isNearBlack(fill) &&
+            (!stroke || stroke === 'none');
+
+          return isArtifactStroke || isArtifactFill;
+        };
 
         svgDocument.querySelectorAll('script, foreignObject').forEach((node) => node.remove());
         svgDocument.querySelectorAll('*').forEach((node) => {
@@ -386,10 +407,8 @@
         });
 
         svgDocument.querySelectorAll('line, polyline, path').forEach((node) => {
-          const stroke = getPresentationValue(node, 'stroke');
-          const strokeWidth = Number.parseFloat(getPresentationValue(node, 'stroke-width'));
           const length = getGeometryLength(node);
-          if (isArtifactLine(stroke, strokeWidth, length)) {
+          if (isArtifactElement(node, length)) {
             node.remove();
           }
         });
