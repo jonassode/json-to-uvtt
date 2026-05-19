@@ -581,7 +581,11 @@
           elementPolylines(el).forEach((pts) => {
             if (pts.length < 2) return;
             if (isWall) {
-              lineOfSight.push(pts.map(toGrid));
+              // Each line_of_sight entry must be a single 2-point segment.
+              const gridPts = pts.map(toGrid);
+              for (let si = 0; si < gridPts.length - 1; si++) {
+                lineOfSight.push([gridPts[si], gridPts[si + 1]]);
+              }
             } else {
               const p0 = toGrid(pts[0]);
               const p1 = toGrid(pts[pts.length - 1]);
