@@ -437,18 +437,20 @@
       };
 
       /**
-       * Render svgDoc to a JPEG data-URL via an off-screen canvas.
-       * crop = { x, y, w, h } in SVG user-unit pixels (optional).
-       * When provided the rendered image covers only that region.
+       * Render svgDoc to a JPEG data-URL via an off-screen canvas, auto-cropped
+       * to the visual content bounding box plus a 30-pixel border.
+       *
+       * Works by rendering the full SVG, then pixel-scanning to find which area
+       * differs from the background colour (sampled from the four corners).
+       * This is transform-agnostic and does not rely on SVG path coordinates.
+       *
+       * Returns { dataUrl, cropX, cropY, cropW, cropH } where cropX/Y/W/H are
+       * the captured region expressed in SVG user-unit coordinates.
        */
-      const renderSvgToDataUrl = (svgDoc, svgW, svgH, crop) => new Promise((resolve) => {
+      const renderSvgToDataUrl = (svgDoc, svgW, svgH) => new Promise((resolve) => {
         const MAX = 4096;
-        const cropX = crop ? crop.x : 0;
-        const cropY = crop ? crop.y : 0;
-        const cropW = crop ? crop.w : svgW;
-        const cropH = crop ? crop.h : svgH;
-
-        let w = cropW, h = cropH;
+        const BORDER = 30;
+        let w = svgW, h = svgH;
         if (w > MAX || h > MAX) {
           const s = Math.min(MAX / w, MAX / h);
           w = Math.round(w * s);
@@ -457,29 +459,78 @@
         w = Math.max(1, Math.round(w));
         h = Math.max(1, Math.round(h));
 
-        // Clone the SVG and set viewBox + dimensions to the crop region so the
-        // browser renders only that area at the target canvas resolution.
-        const cloned = svgDoc.cloneNode(true);
-        const clonedEl = cloned.documentElement;
-        clonedEl.setAttribute('viewBox', `${cropX} ${cropY} ${cropW} ${cropH}`);
-        clonedEl.setAttribute('width', String(w));
-        clonedEl.setAttribute('height', String(h));
-
         const canvas = document.createElement('canvas');
         canvas.width = w;
         canvas.height = h;
         const ctx = canvas.getContext('2d');
-        const svgStr = new XMLSerializer().serializeToString(cloned);
+
+        // Fallback: return the full canvas (no crop) as a data URL.
+        const full = () => {
+          try { resolve({ dataUrl: canvas.toDataURL('image/jpeg', 0.85), cropX: 0, cropY: 0, cropW: svgW, cropH: svgH }); }
+          catch { resolve({ dataUrl: '', cropX: 0, cropY: 0, cropW: svgW, cropH: svgH }); }
+        };
+
+        const svgStr = new XMLSerializer().serializeToString(svgDoc);
         const blob = new Blob([svgStr], { type: 'image/svg+xml' });
         const url = URL.createObjectURL(blob);
         const img = new Image();
         img.onload = () => {
           ctx.drawImage(img, 0, 0, w, h);
           URL.revokeObjectURL(url);
-          try { resolve(canvas.toDataURL('image/jpeg', 0.85)); }
-          catch { resolve(''); }
+
+          // Pixel-scan to find visual content bounds.
+          const pixels = ctx.getImageData(0, 0, w, h).data;
+
+          // Estimate background colour from the four corners of the image.
+          const at = (x, y) => { const i = (y * w + x) * 4; return [pixels[i], pixels[i + 1], pixels[i + 2]]; };
+          const corners = [at(0, 0), at(w - 1, 0), at(0, h - 1), at(w - 1, h - 1)];
+          const bgR = Math.round(corners.reduce((s, [r]) => s + r, 0) / 4);
+          const bgG = Math.round(corners.reduce((s, [, g]) => s + g, 0) / 4);
+          const bgB = Math.round(corners.reduce((s, [,, b]) => s + b, 0) / 4);
+
+          // Find bounding box of pixels that differ noticeably from the background.
+          let minX = w, minY = h, maxX = -1, maxY = -1;
+          for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+              const i = (y * w + x) * 4;
+              const dr = pixels[i] - bgR, dg = pixels[i + 1] - bgG, db = pixels[i + 2] - bgB;
+              if (dr * dr + dg * dg + db * db > 225) { // colour distance > 15
+                if (x < minX) minX = x;
+                if (y < minY) minY = y;
+                if (x > maxX) maxX = x;
+                if (y > maxY) maxY = y;
+              }
+            }
+          }
+
+          // No content found — return the full image unchanged.
+          if (maxX < 0) { full(); return; }
+
+          // Add the pixel border and clamp to canvas bounds.
+          const px0 = Math.max(0, minX - BORDER);
+          const py0 = Math.max(0, minY - BORDER);
+          const px1 = Math.min(w, maxX + BORDER + 1);
+          const py1 = Math.min(h, maxY + BORDER + 1);
+          const cw = px1 - px0;
+          const ch = py1 - py0;
+
+          // Render the cropped region onto a new canvas.
+          const out = document.createElement('canvas');
+          out.width = cw;
+          out.height = ch;
+          out.getContext('2d').drawImage(canvas, px0, py0, cw, ch, 0, 0, cw, ch);
+
+          // Convert pixel crop coordinates back to SVG user-unit space so the
+          // caller can adjust geometry coordinates accordingly.
+          const svgCropX = px0 * svgW / w;
+          const svgCropY = py0 * svgH / h;
+          const svgCropW = cw * svgW / w;
+          const svgCropH = ch * svgH / h;
+
+          try { resolve({ dataUrl: out.toDataURL('image/jpeg', 0.85), cropX: svgCropX, cropY: svgCropY, cropW: svgCropW, cropH: svgCropH }); }
+          catch { full(); }
         };
-        img.onerror = () => { URL.revokeObjectURL(url); resolve(''); };
+        img.onerror = () => { URL.revokeObjectURL(url); resolve({ dataUrl: '', cropX: 0, cropY: 0, cropW: svgW, cropH: svgH }); };
         img.src = url;
       });
 
@@ -509,17 +560,6 @@
         const lineOfSight = [];
         const portals = [];
 
-        // Track bounding box of all wall/door geometry in SVG px so we can crop the image.
-        let bboxMinX = Infinity, bboxMinY = Infinity, bboxMaxX = -Infinity, bboxMaxY = -Infinity;
-        const trackBbox = (pts) => {
-          for (const [x, y] of pts) {
-            if (x < bboxMinX) bboxMinX = x;
-            if (y < bboxMinY) bboxMinY = y;
-            if (x > bboxMaxX) bboxMaxX = x;
-            if (y > bboxMaxY) bboxMaxY = y;
-          }
-        };
-
         svgEl.querySelectorAll('path, line, polyline, polygon, rect').forEach((el) => {
           const isDoor = hasKeyword(el, 'door');
           const isWall = !isDoor && (
@@ -530,7 +570,6 @@
 
           elementPolylines(el).forEach((pts) => {
             if (pts.length < 2) return;
-            trackBbox(pts);
             if (isWall) {
               lineOfSight.push(pts.map(toGrid));
             } else {
@@ -550,17 +589,11 @@
           });
         });
 
-        // Compute crop rectangle: bounding box of geometry + 30 px border, clamped to canvas.
-        const CROP_BORDER = 30;
-        const hasBbox = isFinite(bboxMinX);
-        const cropX = hasBbox ? Math.max(0, bboxMinX - CROP_BORDER) : 0;
-        const cropY = hasBbox ? Math.max(0, bboxMinY - CROP_BORDER) : 0;
-        const cropX2 = hasBbox ? Math.min(svgW, bboxMaxX + CROP_BORDER) : svgW;
-        const cropY2 = hasBbox ? Math.min(svgH, bboxMaxY + CROP_BORDER) : svgH;
-        const cropW = cropX2 - cropX;
-        const cropH = cropY2 - cropY;
+        // Render image with pixel-scan crop; returns SVG-space crop coordinates.
+        const { dataUrl: imageData, cropX, cropY, cropW, cropH } =
+          await renderSvgToDataUrl(svgDoc, svgW, svgH);
 
-        // Shift all geometry coordinates so (0,0) is the top-left of the cropped image.
+        // Shift all geometry coordinates so (0,0) aligns with the top-left of the cropped image.
         const offsetX = cropX / ppg;
         const offsetY = cropY / ppg;
         const shiftCoord = ({ x, y }) => ({
@@ -573,8 +606,6 @@
           position: shiftCoord(p.position),
           bounds: p.bounds.map(shiftCoord),
         }));
-
-        const imageData = await renderSvgToDataUrl(svgDoc, svgW, svgH, { x: cropX, y: cropY, w: cropW, h: cropH });
 
         return {
           format: 0.3,
