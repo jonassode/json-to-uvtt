@@ -662,7 +662,7 @@
           portals: adjustedPortals,
           environment: { baked_lighting: true, ambient_light: 'ffffffff' },
           lights: [],
-          image: imageData,
+          image: imageData.replace(/^data:[^,]+,/, ''),
         };
       };
 
