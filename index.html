@@ -333,7 +333,7 @@
 
       /** Parse a "points" attribute string into [[x,y], ...]. */
       const parseSvgPoints = (str) => {
-        const nums = (str || '').trim().split(/[\s,]+/).map(Number).filter(isFinite);
+        const nums = (str || '').trim().split(/[\s,]+/).filter(Boolean).map(Number).filter(isFinite);
         const pts = [];
         for (let i = 0; i + 1 < nums.length; i += 2) pts.push([nums[i], nums[i + 1]]);
         return pts;
@@ -472,8 +472,10 @@
         const vb = svgEl.getAttribute('viewBox');
         if (vb) {
           const p = vb.trim().split(/[\s,]+/).map(Number);
-          svgW = p[2] || 0;
-          svgH = p[3] || 0;
+          if (p.length >= 4 && p.slice(2, 4).every(isFinite)) {
+            svgW = p[2];
+            svgH = p[3];
+          }
         }
         if (!svgW) svgW = parseFloat(svgEl.getAttribute('width')) || 1000;
         if (!svgH) svgH = parseFloat(svgEl.getAttribute('height')) || 1000;
@@ -537,8 +539,11 @@
 
       // ── Export button ────────────────────────────────────────────────────────
 
+      let isExporting = false;
+
       exportBtn.addEventListener('click', async () => {
-        if (!parsedSvgDoc) return;
+        if (!parsedSvgDoc || isExporting) return;
+        isExporting = true;
         menuDropdown.classList.remove('open');
         menuBtn.setAttribute('aria-expanded', 'false');
         exportBtn.disabled = true;
@@ -560,6 +565,7 @@
           console.error(err);
           setStatus('Export failed.', true);
         } finally {
+          isExporting = false;
           exportBtn.disabled = false;
         }
       });
